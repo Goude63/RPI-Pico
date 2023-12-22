@@ -1,3 +1,11 @@
+#
+# Gathered from various internet examples with minor modifications
+# Example at the end. Remove the # on #''' lines at the botom to activate demo  
+# Bug TBF: The example chain currently only works if Dma1 has been triggered once by itself. 
+#          i.e if you de-comment line 122, run once, then re-commented ???
+#
+import uctypes
+from machine import mem32
 class Dma:    
     # Some constants
     BASE_DMA  = 0x50000000
@@ -73,14 +81,50 @@ class Dma:
         self.CtrlVal &= ~0xC
         self.CtrlVal |= (size >> 1) << 2
               
-    @micropython.viper
-    def SetChData(self, readadd : uint , writeadd : uint, count: uint, trigger : bool):
-        ptr= ptr32(self.ReadRegister)
-        ptr2= ptr32(self.WriteRegister)
-        ptr3= ptr32(self.CntReg)
-        ptr[0] = readadd
-        ptr2[0] = writeadd
-        ptr3[0] = count
+    @micropython.native
+    def SetChData(self, src, dst, count: uint, trigger : bool):
+    #def SetChData(self, readadd : uint , writeadd : uint, count: uint, trigger : bool):
+        mem32[self.ReadRegister] = uctypes.addressof(src)
+        mem32[self.WriteRegister] = uctypes.addressof(dst)
+        mem32[self.CntReg] = count
         if trigger:
-            ptr4= ptr32(self.TrigCtrlReg)
-            ptr4[0] = uint(self.CtrlVal)
+            mem32[self.TrigCtrlReg] = self.CtrlVal
+
+#'''
+def tst():
+	n = 40 # must be > 20
+	a = bytearray(n)
+	b = bytearray(n)
+	c = bytearray(n)
+
+	for x in range (n): a[x]= x
+	for x in range (n): b[x]= 0xbb
+	for x in range (n): c[x]= 0xcc
+
+	Dma0 = Dma(0) 
+	Dma1 = Dma(1)
+	Dma0.ChainTo(1)
+
+	# read location, write location, number of transfers, Trigger transfer?
+	# This example illustrates chaining channels 0->1
+
+	Dma1.SetChData(b, c, n-10, False)
+
+	print('\33c') # clear screen
+
+	print('Before transfers:')
+	print('a=',a.hex())
+	print('b=',b.hex())
+	print('c=',c.hex())
+	print()
+
+	Dma0.SetChData(a, b, n-20, True)
+	# Dma1.SetChData(b, c, n-10, True)  # should no be needed (bug: now need uncomment and run once???)
+
+	print('After transfers:')
+	print('a=',a.hex())
+	print('b=',b.hex())
+	print('c=',c.hex())
+
+tst()
+#'''
