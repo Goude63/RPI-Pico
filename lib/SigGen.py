@@ -1,16 +1,10 @@
 from dma import Dma
-import array, math, uctypes
-from machine import PWM, Pin
+import array, math, uctypes, random
+from machine import PWM, Pin,mem32
 
 # PWM signal generator
 class SigGen:
-	FREE_DMA = list(range(12)) # by default, all DMA ch available
 	USED_PWM_CH = []
-	
-	# if some DMA channels are used by something else, exclude them here
-	@staticmethod
-	def ExcludeDMA(list): 
-		for x in list: SigGen.FREE_DMA.remove(x)
 
 	# signal values must be in range (0, 65535)
 	# pf is the signal generator frequency (PWM's pulse frequency)
@@ -37,10 +31,9 @@ class SigGen:
 	# vals are values between 0 and 65536
 	def Start(self):
 		self.Stop()
-		if len(SigGen.FREE_DMA) < 2: raise(Exception('No DMA channel available'))
 
 		# DMA channel used to send wave data
-		self.dma_w = Dma(SigGen.FREE_DMA.pop(0), data_size=4) # waveform
+		self.dma_w = Dma(data_size=4) # waveform
 		self.dma_w.SetDREQ(24 + self.pwm_ch)   # DREQ_PWM_WRAP0 = 24
 		self.dma_w.SetAddrInc(1, 0) # Read increment, no write inc (pwm register)
 		self.dma_w.SetReadadd(uctypes.addressof(self.wav))		
@@ -48,7 +41,7 @@ class SigGen:
 		self.dma_w.SetCnt(len(self.wav))
 
 		# DMA Channel used to re-trigger dma_w
-		self.dma_c = Dma(SigGen.FREE_DMA.pop(0), data_size=4) # chain 1 blk to repeat
+		self.dma_c = Dma(data_size=4) # chain 1 blk to repeat
 		self.dma_w.ChainTo(self.dma_c.ch) # to retrigger
 		self.dma_c.SetDREQ(0x3f) # no DREQ
 		self.dma_c.SetAddrInc(0, 0) # re-set same ctrl reg on same value every time
@@ -68,22 +61,25 @@ class SigGen:
 		self.dma_w.Enable(0)
 		lst = [self.dma_w.ch, self.dma_c.ch]
 		Dma.Abort(lst)
-		SigGen.FREE_DMA += lst
+		self.dma_c.DeInit()
+		self.dma_w.DeInit()
 		self.running = False
 
 	# a: amplitude as in a * sin(wt). in Volts. Actual amplitude depends on RC filter
-	# shape = "sin", "saw" or "tri".  f is waveform frequency in hz
+	# shape = "sin", "saw", "tri" or "rnd".  f is waveform frequency in hz
 	# the function generates one cycle data to be repeated by SigGen.
 	def SetWav(self, a=1.65, shape = "sin", f=2000, go = True, ch='A'):
-		cnt = self.pf // f
+		cnt = round(self.pf / f)
 		r = array.array("L",[0]*cnt)
 		a = abs(a)
 		if a>1.65: a=1.65
 		ai = int((a / 1.65) * self.zero) # zero is also half the max on value for pwm
 		d = (2*math.pi)/cnt
 		if shape == "tri": cnt = cnt // 2
+		if shape == "rnd": ai += ai
 		for i in range(cnt):
 			if   shape == "sin": y = ai + int(ai * math.sin(i * d)) # y in [0..res-1]
+			elif shape == "rnd": y = random.randrange(ai)
 			else: y = int(2 * ai * ( i / cnt)) # saw and tri            
 			r[i]=y
 		if shape == "tri":
@@ -97,6 +93,8 @@ class SigGen:
 	def __del__(self):
 		self.Stop()
 		self.pwm.deinit()
+		if self.pwm_ch in SigGen.USED_PWM_CH: 
+			SigGen.USED_PWM_CH.remove(self.pwm_ch)
 
 # test stuff. Comment when using this file as import
 #'''
@@ -104,9 +102,9 @@ print('\33c') # clear screen
 
 mhz, khz = (1000000, 1000)
 machine.freq(256 * mhz)
-sg = SigGen(14, pf=8*mhz)
-sg.SetWav(f = 2*mhz, go=True)
-print('steps: ',sg.zero)
+sg = SigGen(14, pf=4*mhz)
+sg.SetWav(f = 10*khz, go=True)
+print('steps: ',sg.zero*2)
 #'''
 
 

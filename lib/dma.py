@@ -7,9 +7,20 @@ from machine import mem32
 class Dma:    
     # Some constants
     BASE_DMA  = 0x50000000
-    ABORT_REG = BASE_DMA + 0x444    
+    ABORT_REG = BASE_DMA + 0x444
+
+    FREE_DMA = list(range(12)) # by default, all DMA ch available
+	
+    # if some DMA channels are used by something else, exclude them here
+    @staticmethod
+    def ExcludeDMA(list): 
+        for x in list: SigGen.FREE_DMA.remove(x)
     
-    def __init__(self, ch, data_size = 1):
+    # ch -1 means auto choose available channel
+    def __init__(self, ch=-1, data_size = 1):
+        if ch<0: 
+            if len(Dma.FREE_DMA) == 0: raise(Exception('No DMA channel available'))            
+            ch = Dma.FREE_DMA.pop(0)
         offset = ch * 0x40
         self.ch = ch
         self.ReadRegister = Dma.BASE_DMA + offset
@@ -96,6 +107,14 @@ class Dma:
         mem32[self.WriteRegister] = uctypes.addressof(dst)
         mem32[self.CntReg] = count
         if trigger: self.Trigger()
+
+    def DeInit(self):
+        self.__del__()
+
+    def __del__(self):
+        if not (self.ch in Dma.FREE_DMA): 
+            Dma.FREE_DMA.append(self.ch)
+
 '''
 def tst():
     print('\33c') # clear screen
