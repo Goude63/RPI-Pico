@@ -45,8 +45,7 @@ class SigGen:
 		self.dma_w.ChainTo(self.dma_c.ch) # to retrigger
 		self.dma_c.SetDREQ(0x3f) # no DREQ
 		self.dma_c.SetAddrInc(0, 0) # re-set same ctrl reg on same value every time
-		self.dma_chain = array.array("L",[0,0]) # only need one, extra safety
-		self.dma_chain[0] = uctypes.addressof(self.wav) # reset address on each repeat
+		self.dma_chain = array.array("L",[uctypes.addressof(self.wav)]) # reset address on each repeat
 		self.dma_c.SetReadadd(uctypes.addressof(self.dma_chain))
 		self.dma_c.SetWriteadd(self.dma_w.TrigCtrlReg + 0x30) # READ_ADDR_TRIG 
 		self.dma_c.SetCnt(1)

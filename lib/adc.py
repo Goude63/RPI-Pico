@@ -1,6 +1,8 @@
 import uctypes, array, time
 from machine import mem32
 
+_ADC = None
+
 def hexn(x, n=32):
 	return hex(x & (2**n-1))
 
@@ -17,13 +19,18 @@ class Adc:
 	INTS      = BASE_ADC + 0x20
 
 	# create Adc object
-	def __init__(self, chs=0, bits = 12, fs=8000, buf_size=64):
+	def __init__(self, chs=0, bits = 12, fs=8000, buf_size=128):
+		if not (_ADC is None): raise(Exception('Only instanciate one Adc object please'))
+
+		_ADC = self #TBD set back to None in DeInit()
+
 		self.fs = fs
 		self.t_us = 1000000 // fs
 		self.ch_mask = 0
 		self.n = 1
 		self.bits = bits
 		self.buf = array.array('H', [0])
+		self.buf_size = buf_size
 		if type(chs) == type([]):
 			self.n = len(chs)
 			for ch in chs: 
@@ -72,6 +79,39 @@ class Adc:
 				ix += 1
 			time.sleep_us(self.t_us)
 		return self.buf
+
+	# If file object is present, will write to file. CB(buf) will be called if provided
+	@micropython.native
+	def Start(self, buf=None, CB=None): 
+		if (buf is None) and (CB is None): raise(Exception('"buf" or "CB" required'))
+		# prepare ping pong buffers
+		self.b1 =  array.array('H', [0] * self.buf_size)
+		self.b2 =  array.array('H', [0] * self.buf_size)
+		self.dma_chain = Dma()
+
+		# DMA channel used to send wave data
+		self.dma_adc = Dma(data_size=4) # acquisition
+		self.dma_adc.SetDREQ(36)   # DREQ_ADC = 26
+		self.dma_adc.SetAddrInc(0, 1) # No Read increment (adc), write bufferinc 
+		self.dma_adc.SetReadadd(Adc.FIFO)		
+		self.dma_adc.SetWriteadd(uctypes.addressof(self.b2)) 	
+		self.dma_adc.SetCnt(1) # count = 1 for first
+
+		# DMA Channel used to re-trigger dma_adc
+		self.dma_chain = Dma(data_size=4) # chain 1 blk to repeat
+		self.dma_adc.ChainTo(self.dma_chain.ch) # to retrigger
+		self.dma_chain.SetDREQ(0x3f) # no DREQ
+		self.dma_chain.SetAddrInc(1, 1) # 2 elements to write: need inc
+		self.chain = array.array("L",[uctypes.addressof(self.b1), self.buf_size]) 
+		self.bx = 1 # buffer ix filled by dma  
+		self.dma_chain.SetReadadd(uctypes.addressof(self.chain))
+		self.dma_chain.SetWriteadd(self.dma_adc.TrigCtrlReg + 0xc) # WRITE_ADDR, TRANS_COUNT_TRIF
+		self.dma_chain.SetCnt(2)
+		self.dma_chain.Enable()
+
+		#setup interrupts
+
+		self.dma_adc.Trigger()
 
 # Test it.
 adc = Adc(chs=4,fs = 2) # test with ch4: temp sensor

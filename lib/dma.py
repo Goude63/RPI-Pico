@@ -19,8 +19,13 @@ class Dma:
     # ch -1 means auto choose available channel
     def __init__(self, ch=-1, data_size = 1):
         if ch<0: 
-            if len(Dma.FREE_DMA) == 0: raise(Exception('No DMA channel available'))            
+            if len(Dma.FREE_DMA) == 0: raise(Exception('No DMA channel available')) 
             ch = Dma.FREE_DMA.pop(0)
+        else:
+            if not(ch in Dma.FREE_DMA): raise(Exception('DMA channel #' + str(ch) + ' not available')) 
+            Dma.FREE_DMA.remove(ch)
+
+
         offset = ch * 0x40
         self.ch = ch
         self.ReadRegister = Dma.BASE_DMA + offset
@@ -128,11 +133,9 @@ def tst():
     for x in range (n): b[x]= 0xbb
     for x in range (n): c[x]= 0xcc
 
-    Dma0 = Dma(0) 
-    Dma1 = Dma(1)
-    # print(hex(Dma1.CtrlVal))
+    Dma0 = Dma() 
+    Dma1 = Dma()
     Dma1.Enable() # Chain will not work if chained channel is not enabled
-    # print(hex(Dma1.CtrlVal))
     Dma0.ChainTo(1)
 
     # read location, write location, number of transfers, Trigger transfer?
@@ -147,13 +150,14 @@ def tst():
     print()
 
     Dma0.SetChData(a, b, n-20, True)
-    # print(hex(Dma0.CtrlVal))
     # Dma1.SetChData(b, c, n-10, True)  # should no be needed (unless chain don't work)
 
     print('After transfers:')
     print('a=',a.hex())
     print('b=',b.hex())
     print('c=',c.hex())
-    # print(hex(Dma0.CtrlVal))
+
+    Dma0.DeInit()
+    Dma1.DeInit()
 tst()
 '''
