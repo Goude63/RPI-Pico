@@ -297,7 +297,7 @@ from machine import Pin, SPI
 import os
 
 def test():
-    machine.freq(240000000)
+    machine.freq(250000000)
 
     # Set the Chip Select (CS) pin high
     cs = Pin(1, Pin.OUT)

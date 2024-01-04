@@ -3,6 +3,7 @@
 # Example at the end. Add # on ''' lines 99 and 141 to activate demo 
 #
 import uctypes
+from utils import *
 from machine import mem32
 class Dma:    
     # Some constants
@@ -24,7 +25,6 @@ class Dma:
         else:
             if not(ch in Dma.FREE_DMA): raise(Exception('DMA channel #' + str(ch) + ' not available')) 
             Dma.FREE_DMA.remove(ch)
-
 
         offset = ch * 0x40
         self.ch = ch
@@ -82,9 +82,13 @@ class Dma:
     def Trigger(self):
         mem32[self.TrigCtrlReg] = self.CtrlVal
             
-    def ChainTo(self, ChainCh : uint):
+    def ChainTo(self, ChainCh: uint):
         self.CtrlVal &= ~0x7800
         self.CtrlVal |= (ChainCh << 11)
+    
+    def SetWrap(self, nbits: uint, rw01: uint):
+        self.CtrlVal &= ~0x7c0
+        self.CtrlVal |= (nbits << 6) | (rw01 << 10)
         
     def SetDataSize(self, size: uint):  # size = 1, 2 or 4
         self.CtrlVal &= ~0xC
@@ -104,10 +108,21 @@ class Dma:
     def SetAddrInc(self, rdInc = 1, wrInc = 1):
         self.CtrlVal &= ~0x30 # bits 5:4
         self.CtrlVal |= ((wrInc << 1) | rdInc) << 4
+
+    def Info(self):
+        pass
+        ch = self.ch        
+        ctrl = mem32[self.CtrlReg]
+        print('ch:', ch, ' ctrl:', hex(ctrl)[2:], ' Size:', 2**field(ctrl,2,2), ' EN:', ctrl & 1, \
+            ' BUSY:', field(ctrl,24,1), ' TREQ:', hex(field(ctrl,15,6))[2:], ' Chain:', field(ctrl,11,4))
+        print('Write:',hex(mem32[self.WriteRegister])[2:],end='  ')
+        print('Read:',hex(mem32[self.ReadRegister])[2:],end='  ')
+        print('Cnt:',str(mem32[self.CntReg]) + '/' + str(mem32[Dma.BASE_DMA + 0x804 + 0x40 * ch]),end='  ')
+        print('INC_WR:', bin(field(ctrl,4,2))[2:], ' RING:', str(field(ctrl,6,4)) + \
+            '-' + 'RW'[field(ctrl,10,1)], '\n')
               
     @micropython.native
     def SetChData(self, src, dst, count: uint, trigger : bool):
-    #def SetChData(self, readadd : uint , writeadd : uint, count: uint, trigger : bool):
         mem32[self.ReadRegister] = uctypes.addressof(src)
         mem32[self.WriteRegister] = uctypes.addressof(dst)
         mem32[self.CntReg] = count
@@ -122,6 +137,7 @@ class Dma:
 
 '''
 def tst():
+    global Dma0, Dma1
     print('\33c') # clear screen
 
     n = 40 # must be > 20
@@ -155,7 +171,10 @@ def tst():
     print('After transfers:')
     print('a=',a.hex())
     print('b=',b.hex())
-    print('c=',c.hex())
+    print('c=',c.hex(),end='\n\n')
+
+    Dma0.Info()
+    Dma1.Info()
 
     Dma0.DeInit()
     Dma1.DeInit()
