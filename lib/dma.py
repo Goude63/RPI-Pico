@@ -109,17 +109,20 @@ class Dma:
         self.CtrlVal &= ~0x30 # bits 5:4
         self.CtrlVal |= ((wrInc << 1) | rdInc) << 4
 
-    def Info(self):
-        pass
+    def Info(self, title=''):
+        if (title): print(title)
         ch = self.ch        
         ctrl = mem32[self.CtrlReg]
         print('ch:', ch, ' ctrl:', hex(ctrl)[2:], ' Size:', 2**field(ctrl,2,2), ' EN:', ctrl & 1, \
-            ' BUSY:', field(ctrl,24,1), ' TREQ:', hex(field(ctrl,15,6))[2:], ' Chain:', field(ctrl,11,4))
-        print('Write:',hex(mem32[self.WriteRegister])[2:],end='  ')
+            ' BUSY:', field(ctrl,24,1), ' TREQ:', field(ctrl,15,6), end='  ')
+        chain = field(ctrl,11,4)
+        if chain == ch: chain = '-'
+        print('Chain:',chain)
         print('Read:',hex(mem32[self.ReadRegister])[2:],end='  ')
+        print('Write:',hex(mem32[self.WriteRegister])[2:],end='  ')
         print('Cnt:',str(mem32[self.CntReg]) + '/' + str(mem32[Dma.BASE_DMA + 0x804 + 0x40 * ch]),end='  ')
-        print('INC_WR:', bin(field(ctrl,4,2))[2:], ' RING:', str(field(ctrl,6,4)) + \
-            '-' + 'RW'[field(ctrl,10,1)], '\n')
+        print('INC_R-W:', str(field(ctrl,4,1))+ '-' + str(field(ctrl,5,1)), \
+            ' RING:', str(2**field(ctrl,6,4)) +  '-' + 'RW'[field(ctrl,10,1)], '\n')
               
     @micropython.native
     def SetChData(self, src, dst, count: uint, trigger : bool):

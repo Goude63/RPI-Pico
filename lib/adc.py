@@ -1,13 +1,13 @@
 import uctypes, array, time, math
-from machine import mem32
+from machine import mem32, mem16
 from dma import Dma
 from utils import *
 
 # Receives adc values from dma1 in 4 bytes format, 
 # outputs 2 bytes to dma2 that send to 16 bits buffer
 # also generates an interrupts every time buffer size count received
-# Must push buffers size (not fom dma) first, then dma1 sends data
-@rp2.asm_pio(push_thresh=8, in_shiftdir=rp2.PIO.SHIFT_LEFT, out_shiftdir=rp2.PIO.SHIFT_RIGHT)
+# Must push buffers size (not form dma) first, then dma1 sends data
+@rp2.asm_pio(push_thresh=32, in_shiftdir=rp2.PIO.SHIFT_LEFT, out_shiftdir=rp2.PIO.SHIFT_RIGHT)
 def adc_bridge():
 	pull(block)         # retrieve buffer size (sample count)
 	mov(x,osr)          # buffer size stored in x 
@@ -21,6 +21,7 @@ def adc_bridge():
 	pull(block)    # retrieve adc value in 32 bits format
 
 	out(isr,8)
+	in(isr)
 	push(block)
 	out(isr,8)
 	push(block)
@@ -28,26 +29,13 @@ def adc_bridge():
 	irq(0)
 	# wrap() # Not needed, program auto wraps on end
 	#sample code to setup PIO program
-	'''
-	sm = rp2.StateMachine(0, adc_bridge) # in_shiftdir=rp2.PIO.SHIFT_RIGHT, out_shiftdir=rp2.PIO.SHIFT_RIGHT)
-	x = sm.irq(buf_switch)
-	sm.active(1)
-
-	sm.put(4) # buffer size for test
-	for n in range(0,12):
-		a = ((n*2) + 1) % 16
-		b = (a + 1) % 16
-		sm.put(a + (b << 8))
-		while sm.rx_fifo()>0:
-			print(hex(sm.get()), end = ' ')
-
-	#time.sleep_ms(300)
-	#sm.active(0)
-	'''	
 
 # interrupt routine to copy data
-def buf_switch(pio):
-    print('(*) ', end ='') # pio.irq().flags(), end =' ')
+CNT = 0
+def buf_irq(pio):
+	global CNT
+	CNT += 1
+    # print('(*) ', end ='') # pio.irq().flags(), end =' ')
 
 class Adc:    
 	BASE_ADC  = 0x4004c000
@@ -126,7 +114,7 @@ class Adc:
 	def Start(self, buf=None, CB=None, pio_sm=0): 
 		bs = self.buf_size
 		if (buf is None) and (CB is None): raise(Exception('"buf" or "CB" required'))
-		bs_bits = math.log2(bs)		
+		bs_bits = math.log2(bs*4) # 2 buffers, 2 bytes per sample		
 		if bs_bits != round(bs_bits): raise(Exception('"Buffer Size" must be a power of 2'))
 		if pio_sm > 3: raise(Exception('"pio_sm" must be <= 3'))
 
@@ -134,20 +122,33 @@ class Adc:
 
 		# setup state machine
 		self.sm = rp2.StateMachine(pio_sm, adc_bridge) 
-		self.irq = self.sm.irq(buf_switch)
+		self.irq = self.sm.irq(buf_irq)
 		self.sm.active(1)
+		self.sm.put(bs) # set buffer size to get timely IRQs 
+
+		self.TstPIO() # debug to check if PIO and its FIFOs are working
+		return
 
 		# prepare ping pong. 
-		# Need 2, but allocate 3 to insure dma wrap alignment is possible
-		self.buf =  array.array('H', [0] * (bs * 3))
-		s0 = uctypes.addressof(self.buf)
+		# Need 2x, but allocate 3x to insure dma wrap alignment is possible
+		self.buf =  array.array('H', [0xaa55] * (bs * 4))
 
+		# find a proper wraping address inside oversized buffer
+		s0 = uctypes.addressof(self.buf)
 		bs_bits = int(bs_bits)
-		mask = int('0b' + ('1' * int(bs_bits)))
-		ofst = mask - ((s0 & mask) ^ mask)
-		s0 += ofst
+		mask = 2**bs_bits-1
+		ofst = (mask + 1) - (s0 & mask)
+
+		#print(hex(s0), bin(mask), ofst )
+
+		s0 += ofst # proper start address. osft is in bytes
+
 		# (buff start, buffer last) for each ping pong buffer
-		self.bufs_spec = [(s0, s0+bs-1), (s0 + bs, s0 + 2 * bs - 1)]  
+		ofix = ofst // 2
+		self.pp = [ofix, ofix + bs]  
+
+		#print(self.pp)
+		#time.sleep(2)
 
 		# DMA channel used to copy adc to dword pio FIFO
 		self.dma_adc = Dma(data_size=4) # acquisition
@@ -155,7 +156,8 @@ class Adc:
 		self.dma_adc.SetAddrInc(0, 0) # No increment: adc to PIO FIFO = fixed addresses
 		self.dma_adc.SetReadadd(Adc.FIFO)		
 		self.dma_adc.SetWriteadd(PIOTX) 	
-		self.dma_adc.SetCnt(0xffffffff) # @22Ksps, this is > 54 hours
+		self.dma_adc.SetCnt(0x3fffffff) # @22Ksps, this is > 54 hours
+		self.dma_adc.Enable()
 
 		# DMA Channel used to copy pio FIFO bytes (2 per sample) to ram
 		self.dma_ram = Dma(data_size=1) # chain 1 blk to repeat
@@ -164,26 +166,74 @@ class Adc:
 		self.dma_ram.SetReadadd(PIOTX + 0x13) # matching RX is + 0x13 (byte access)
 		self.dma_ram.SetWriteadd(s0)      # WRITE_ADDR, TRANS_COUNT_TRIF
 		self.dma_ram.SetWrap(bs_bits, 1)  # set wrap bits, and wrap on write 
-		self.dma_ram.SetCnt(0xffffffff) # 27hrs at 22ksps
+		self.dma_ram.SetCnt(0x3fffffff) # 27hrs at 22ksps
+		self.dma_ram.Enable()
 
 		# setup Adc
-		# select clock
-		if self.fs<10: raise(Exception('Sampling rate must be at least 10Hz'))
-		div = 48000000 * 256 // self.fs # lower 8 bits are fractional
+		# set ADC clock
+		if self.fs<733: raise(Exception('Sampling rate must be at least 733Hz'))
+		if self.fs>500000: raise(Exception('Sampling rate must be <= 500kHz'))
+		div = (48000000 << 8) // self.fs # lower 8 bits are fractional
 		mem32[Adc.DIV] = div
 
-		self.cs &= ~(0x1F << 16) # clear RROBIN
-		self.cs |= self.ch_mask << 16 | 0x8 # set RROBIN and START_MANY
-		mem32[Adc.FCS] |= 1      # enable FIFO (needed for dma  access)
+		self.cs &= ~(0x1F << 16)			# clear RROBIN
+		self.cs |= self.ch_mask << 16		# set RROBIN and START_MANY
+		mem32[Adc.FCS] = 0b1001 | (1<<24) 	# FIFO en + DREQ_EN + THRESH = 1
+		mem32[Adc.CS] = self.cs         	# setup adc except START
+
+		# debug, show info before start (comment)
+		self.Info('\33c')
+		print('\nStarting in 2 sec...\n')
+		time.sleep(2)
 
 		#start dma
 		self.dma_adc.Trigger()
 		self.dma_ram.Trigger()
-		mem32[Adc.CS] = self.cs  # start adc
+		self.cs |= 8  # set START_MANY
+		mem32[Adc.CS] = self.cs  # start adc		
 
+	def Stop(self):
+		self.cs &= ~8 # stop RROBIN: MANY =  0
+		mem32[Adc.CS] = self.cs
+
+		self.dma_adc.Enable(0)
+		self.dma_ram.Enable(0)
+		lst = [self.dma_adc.ch, self.dma_ram.ch]
+		Dma.Abort(lst)
+		self.dma_adc.DeInit()
+		self.dma_adc.DeInit()
+		self.sm.active(0)
+	
+	def ShowPingPong(self):
+		print('ping:',memoryview(self.buf[self.pp[0]:self.pp[0] + self.buf_size]).hex())
+		print('pong:',memoryview(self.buf[self.pp[1]:self.pp[1] + self.buf_size]).hex())
+		print()
+
+	def Info(self,title=''):
+		if (title): print(title)
+		cs = mem32[Adc.CS]
+		print('ADC:')
+		print('EN:', cs & 1, '  TS:', field(cs,1,1), '  ONCE:', field(cs,2,1), \
+			'  MANY:', field(cs,3,1), '  READY:', field(cs,8,1))
+		print('AINSEL:', field(cs,12,3), '  RROBIN:', bin(field(cs,16,5))[2:], \
+			'  DIV:', mem32[Adc.DIV] / 256)
+		self.dma_adc.Info('\nADC to PIO')
+		self.dma_ram.Info('PIO to RAM')
+		self.ShowPingPong()
+
+	# For debug. Check pio FIFOs (before starting DMA channels)
+	# should output 1 2 3 4 5 6 7 8 9 a b c d e f 0 1 2 3 ...
+	def TstPIO(self, cnt=20):
+		for n in range(0,cnt):
+			a = ((n*2) + 1) % 16
+			b = (a + 1) % 16
+			self.sm.put(a + (b << 8))
+			while self.sm.rx_fifo()>0:
+				print(hex(self.sm.get()), end = ' ')
 
 # Test it.
 '''
+# test non Dma acquisition
 adc = Adc(chs=4,fs = 2) # test with ch4: temp sensor
 print('n=',adc.n, ' mask=', bin(adc.ch_mask), ' chs=', adc.chs)
 while True:
@@ -191,12 +241,18 @@ while True:
 	print(27-(3.3*adc.buf[0]/4096 - 0.706)/.001721)
 	time.sleep_ms(200)
 '''
-
+# Test Dma acquisition
 def DataCB():
-	pass
+	print('*', end = '')
 
-adc = Adc(chs=4,fs = 20,buf_size=16) # test with ch4: temp sensor
+machine.freq(260000000)
+print('\33c') # clear screen
+adc = Adc(chs=0,fs = 960, buf_size=16) # test with ch4: temp sensor
 adc.Start(CB=DataCB)
-adc.dma_adc.Info()
+for i in range(0,7):
+	adc.ShowPingPong()
+	time.sleep_ms(5)
 
-
+adc.Stop()
+print('\nStopped. CNT=', CNT) # clear screen
+adc.Info()
