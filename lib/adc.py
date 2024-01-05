@@ -3,16 +3,21 @@ from machine import mem32, mem16
 from dma import Dma
 from utils import *
 
+import micropython
+micropython.alloc_emergency_exception_buf(100)
+
+
 # Receives adc values from dma1 in 4 bytes format, 
 # outputs 2 bytes to dma2 that send to 16 bits buffer
 # also generates an interrupts every time buffer size count received
-# Must push buffers size (not form dma) first, then dma1 sends data
+# Must "put" buffers size as first FIFO entry, then dma1 sends data
 @rp2.asm_pio(push_thresh=32, in_shiftdir=rp2.PIO.SHIFT_LEFT, out_shiftdir=rp2.PIO.SHIFT_RIGHT)
 def adc_bridge():
-	pull(block)         # retrieve buffer size (sample count)
-	mov(x,osr)          # buffer size stored in x 
+	pull(block)	# retrieve buffer size (sample count)
+	mov(x,osr)	# buffer size stored in x 
 	mov(y,x)
-	jmp(x_dec,'next')  # we need buffer size -1
+	pull(block)	# discard first sample (not in RROBIN)
+	jmp(x_dec,'next')  # we need buffer size -1 except on first ??
 
 	wrap_target()  # loop when buffer size has been reached
 	mov(y,x)       # copy buffer size to y
@@ -20,22 +25,15 @@ def adc_bridge():
 	label('next')  # loop when buffer size not yet reached
 	pull(block)    # retrieve adc value in 32 bits format
 
-	out(isr,8)
-	in(isr)
+	mov(isr,osr)
+	in_(null,24)
 	push(block)
-	out(isr,8)
+	mov(isr,osr)
+	in_(null,16)
 	push(block)
 	jmp(y_dec,'next')  # no irq until 
 	irq(0)
 	# wrap() # Not needed, program auto wraps on end
-	#sample code to setup PIO program
-
-# interrupt routine to copy data
-CNT = 0
-def buf_irq(pio):
-	global CNT
-	CNT += 1
-    # print('(*) ', end ='') # pio.irq().flags(), end =' ')
 
 class Adc:    
 	BASE_ADC  = 0x4004c000
@@ -49,13 +47,10 @@ class Adc:
 	INTF      = BASE_ADC + 0x1c
 	INTS      = BASE_ADC + 0x20
 
-	_ADC = None  # reference to unique instance
-
 	# create Adc object
 	def __init__(self, chs=0, bits = 12, fs=8000, buf_size=128):
-		if not (Adc._ADC is None): raise(Exception('Only instanciate one Adc object please'))
-
-		Adc._ADC = self #TBD set back to None in DeInit()
+		# create pre-allocated bound function reference to work in "schedule"
+		self.NewBuffer_ref = self.NewBuffer # Called back on ping and pong
 
 		self.fs = fs
 		self.t_us = 1000000 // fs
@@ -111,23 +106,27 @@ class Adc:
 
 	# If file object is present, will write to file. CB(buf) will be called if provided
 	#@micropython.native
-	def Start(self, buf=None, CB=None, pio_sm=0): 
+	def Start(self, file=None, CB=None, pio_sm=0): 
+		if (file is None) and (CB is None): raise(Exception('"file" or "CB" required'))
+
+		self.CB = CB
+		self.file = file
+
 		bs = self.buf_size
-		if (buf is None) and (CB is None): raise(Exception('"buf" or "CB" required'))
 		bs_bits = math.log2(bs*4) # 2 buffers, 2 bytes per sample		
-		if bs_bits != round(bs_bits): raise(Exception('"Buffer Size" must be a power of 2'))
+		if str(bs_bits)[-2:]!='.0': raise(Exception('"Buffer Size" must be a power of 2'))
 		if pio_sm > 3: raise(Exception('"pio_sm" must be <= 3'))
 
 		PIOTX = 0x50200010 + 4 * pio_sm
 
 		# setup state machine
 		self.sm = rp2.StateMachine(pio_sm, adc_bridge) 
-		self.irq = self.sm.irq(buf_irq)
+		self.irq = self.sm.irq(self.buf_irq)
 		self.sm.active(1)
 		self.sm.put(bs) # set buffer size to get timely IRQs 
 
-		self.TstPIO() # debug to check if PIO and its FIFOs are working
-		return
+		# self.TstPIO() # debug to check if PIO and its FIFOs are working
+		# return
 
 		# prepare ping pong. 
 		# Need 2x, but allocate 3x to insure dma wrap alignment is possible
@@ -146,6 +145,7 @@ class Adc:
 		# (buff start, buffer last) for each ping pong buffer
 		ofix = ofst // 2
 		self.pp = [ofix, ofix + bs]  
+		self.ppix = 0
 
 		#print(self.pp)
 		#time.sleep(2)
@@ -182,9 +182,9 @@ class Adc:
 		mem32[Adc.CS] = self.cs         	# setup adc except START
 
 		# debug, show info before start (comment)
-		self.Info('\33c')
-		print('\nStarting in 2 sec...\n')
-		time.sleep(2)
+		# self.Info('\33c')
+		# print('\nStarting in 2 sec...\n')
+		# time.sleep(2)
 
 		#start dma
 		self.dma_adc.Trigger()
@@ -204,6 +204,26 @@ class Adc:
 		self.dma_adc.DeInit()
 		self.sm.active(0)
 	
+	# interrupt routine triggered by pio code every "Adc.buf_size" sample
+	# Only schedule handling function
+	@micropython.viper
+	def buf_irq(self,pio):
+		micropython.schedule(self.NewBuffer_ref, None)
+
+	# function called every time a buffer is ready to process
+	@micropython.viper
+	def NewBuffer(self, _):
+		ix = self.pp[self.ppix]
+		mv = memoryview(self.buf[ix:ix+self.buf_size])
+		if self.file:
+			self.file.write(mv)
+		else:
+			CB(mv)
+		i = int(self.ppix)
+		i = 1 - i
+		self.ppix = i
+		
+	# For debug. Suggests using buf_size <= 16 when debugging 
 	def ShowPingPong(self):
 		print('ping:',memoryview(self.buf[self.pp[0]:self.pp[0] + self.buf_size]).hex())
 		print('pong:',memoryview(self.buf[self.pp[1]:self.pp[1] + self.buf_size]).hex())
@@ -241,18 +261,15 @@ while True:
 	print(27-(3.3*adc.buf[0]/4096 - 0.706)/.001721)
 	time.sleep_ms(200)
 '''
-# Test Dma acquisition
-def DataCB():
-	print('*', end = '')
 
+'''
+# test dma interface
 machine.freq(260000000)
 print('\33c') # clear screen
-adc = Adc(chs=0,fs = 960, buf_size=16) # test with ch4: temp sensor
-adc.Start(CB=DataCB)
-for i in range(0,7):
-	adc.ShowPingPong()
-	time.sleep_ms(5)
-
+adc = Adc(chs=0, fs = 22000, buf_size=2048) 
+f = open("/mictest.bin", "w")
+adc.Start(file=f)
+time.sleep(5)
 adc.Stop()
-print('\nStopped. CNT=', CNT) # clear screen
-adc.Info()
+f.close()
+'''
