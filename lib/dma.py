@@ -1,6 +1,6 @@
 #
 # Gathered from various internet examples with minor modifications
-# Example at the end. Add # on ''' lines 99 and 141 to activate demo 
+# Example at the end. Add # on ''' lines 141 and 185 to activate demo 
 #
 import uctypes
 from utils import *
@@ -9,22 +9,30 @@ class Dma:
     # Some constants
     BASE_DMA  = 0x50000000
     ABORT_REG = BASE_DMA + 0x444
-
-    FREE_DMA = list(range(12)) # by default, all DMA ch available
 	
-    # if some DMA channels are used by something else, exclude them here
+    # check all DMA channels (enabled buisy...)
     @staticmethod
-    def ExcludeDMA(list): 
-        for x in list: SigGen.FREE_DMA.remove(x)
+    def Scan(max=11): 
+        for ch in range(0,max):
+            ch_addr = Dma.BASE_DMA + 0x40 * ch
+            ctrl = mem32[ch_addr + 0x10] # non trig
+            print('Ch:', ch, end='\t')
+            print('EN: ', ctrl & 1, '\tBUSY:', (ctrl >> 24) & 1, end = '\t')
+            print('RD_Addr: ', hex(mem32[ch_addr]), '\tWR_Addr:', hex(mem32[ch_addr+4]))
+        print()
+
     
     # ch -1 means auto choose available channel
     def __init__(self, ch=-1, data_size = 1):
-        if ch<0: 
-            if len(Dma.FREE_DMA) == 0: raise(Exception('No DMA channel available')) 
-            ch = Dma.FREE_DMA.pop(0)
+        if ch<0: r = range(0,12)
+        else: r = range(ch, ch+1)
+        for i in range(0,12): # Find a free dma channel
+            ch_ctrl = mem32[Dma.BASE_DMA + 0x40 * i + 0x10]
+            if (ch_ctrl & 0x1000001) == 0:
+                ch = i
+                break
         else:
-            if not(ch in Dma.FREE_DMA): raise(Exception('DMA channel #' + str(ch) + ' not available')) 
-            Dma.FREE_DMA.remove(ch)
+            raise(Exception('No dma channel available'))             
 
         offset = ch * 0x40
         self.ch = ch
@@ -36,18 +44,21 @@ class Dma:
         self.CtrlVal = 0x3F8033 #so that the chain value is set to itself
         self.SetDataSize(data_size)
         self.ChainTo(ch)
+        self.Enable()
 
     @staticmethod
-    @micropython.viper
+    @micropython.native
     def Abort(chs): # integer or list of channels to 
-        ptr = ptr32(Dma.ABORT_REG)
         bits = 0
-        if type(chs) == type([]):
-            for ch in chs: bits |= 2 ^ uint(ch)
-        else:
-            bits = 1 << uint(chs)
-        ptr[0] = bits
-        while ptr[0] != 0: pass  # wait all ch aborted
+        if type(chs) != type([]): chs = [chs]
+        for ch in chs: 
+            bits |= 1 << ch
+            ch_addr = Dma.BASE_DMA + 0x40 * ch
+            mem32[ch_addr + 0x10] &= ~0x1000001
+
+        mem32[Dma.ABORT_REG] = bits
+        # wait all ch aborted
+        while mem32[Dma.ABORT_REG] != 0: pass  
         
     @micropython.viper
     def SetWriteadd(self, add: uint):
@@ -134,9 +145,9 @@ class Dma:
     def DeInit(self):
         self.__del__()
 
+    # client code must insure calling abort for chained/wrapped channels
     def __del__(self):
-        if not (self.ch in Dma.FREE_DMA): 
-            Dma.FREE_DMA.append(self.ch)
+        self.Enable(0) 
 
 '''
 def tst():
@@ -154,6 +165,7 @@ def tst():
 
     Dma0 = Dma() 
     Dma1 = Dma()
+
     Dma1.Enable() # Chain will not work if chained channel is not enabled
     Dma0.ChainTo(1)
 

@@ -5,24 +5,22 @@ methods so the device can be mounted as a filesystem.
 Example usage on on pico zero at the end (uncomment to run):
 """
 
+from machine import Pin, SPI, mem32
 from micropython import const
-import time
+import time, os
+from utils import *
 
 _CMD_TIMEOUT = const(100)
-
 _R1_IDLE_STATE = const(1 << 0)
-# R1_ERASE_RESET = const(1 << 1)
 _R1_ILLEGAL_COMMAND = const(1 << 2)
-# R1_COM_CRC_ERROR = const(1 << 3)
-# R1_ERASE_SEQUENCE_ERROR = const(1 << 4)
-# R1_ADDRESS_ERROR = const(1 << 5)
-# R1_PARAMETER_ERROR = const(1 << 6)
 _TOKEN_CMD25 = const(0xFC)
 _TOKEN_STOP_TRAN = const(0xFD)
 _TOKEN_DATA = const(0xFE)
 
-
 class SDCard:
+    SD = None # hold VFS object
+    BASE_DMA  = 0x50000000
+
     def __init__(self, spi, cs, baudrate=1320000):
         self.spi = spi
         self.cs = cs
@@ -288,30 +286,84 @@ class SDCard:
             return self.sectors
         if op == 5:  # get block size in bytes
             return 512
+    
+    @staticmethod
+    def ActDmaList():  # Enumerate active (EN) DMA channels
+        lst = []
+        for ch in range(0,12):
+            if mem32[SDCard.BASE_DMA + 0x40 * ch + 0x10] & 1:
+                lst.append(ch)
+        return lst
+
+    # Note: spi_ch calculated for rp2 chip. Code need modif for others chips
+    @staticmethod
+    def Mount(mp='/sd', pins=(1,2,3,0)):  # (cs, sck, mosi/tx, miso/rx)
+        if not SDCard.SD is None: return
+
+        # find which dma channels were used before
+        before = SDCard.ActDmaList()
+
+        # Set the Chip Select (CS) pin high
+        cs = Pin(pins[0], Pin.OUT)
+
+        # figure spi_ch from clk pin
+        spi_ch = 0 if pins[1] in [2,6,18] else 1 # change for non rp2 chgips
+
+        # Intialize the SD Card
+        spi = SPI(spi_ch, baudrate=100000,
+            polarity=0, phase=0, bits=8, firstbit=SPI.MSB,
+            sck=Pin(pins[1]), mosi=Pin(pins[2]), miso=Pin(pins[3]))
+
+        SDCard.SD = SDCard(spi, cs, baudrate=50000000)
+
+        # Mount filesystem
+        SDCard.VFS = os.VfsFat(SDCard.SD)
+        os.mount(SDCard.VFS, mp)
+        SDCard.MP = mp
+
+        after = SDCard.ActDmaList()
+        new = [] 
+        for ch in after:
+            if not (ch in before): new.append(ch)
+        SDCard.DMA = new
+
+    @staticmethod
+    def UMount():
+        if SDCard.SD is None: return
+        os.umount(SDCard.MP)
+        SDCard.SD.spi.deinit()
+
+        # disable DMA channels that were used by SD Cart (SPI??)
+        for ch in SDCard.SD.DMA:
+             mem32[SDCard.BASE_DMA + 0x40 * ch + 0x10] &= ~1
+
+        SDCard.VFS = None
+        SDCard.SD = None
+
+
+    @staticmethod
+    def Format(mp='/sd'):
+        # if not initially mounted: Mound then Demount
+        was_mmnt = not SDCard.SD is None
+
+        if not was_mmnt: SDCard.Mount()
+
+        # do format
+        SDCard.VFS.mkfs(SDCard.SD)
+        SDCard.UMount()
+
+        # if initialli mounted, do re-mount
+        if was_mmnt: SDCard.Mount()
 
 ''' 
 ################################################
-# test it
+# test it (sample usage code)
 ################################################
-from machine import Pin, SPI 
-import os
 
 def test():
     machine.freq(250000000)
 
-    # Set the Chip Select (CS) pin high
-    cs = Pin(1, Pin.OUT)
-
-    # Intialize the SD Card
-    spi = SPI(0, baudrate=100000,
-        polarity=0, phase=0, bits=8, firstbit=SPI.MSB,
-        sck=Pin(2), mosi=Pin(3), miso=Pin(0))
-
-    sd = SDCard(spi, cs, baudrate=50000000)
-
-    # Mount filesystem
-    vfs = os.VfsFat(sd)
-    os.mount(vfs, "/sd")
+    SDCard.Mount()
 
     # Create a file in write mode and write something
     f = open("/sd/sdtest.txt", "w")
@@ -319,7 +371,7 @@ def test():
     t0 = time.time_ns()
     s = " - Hello World! Longer sentense shows big write performance. Smaller test the file.write overhead. "
     s += '. This will be a very long "single write" test to estimate better the hardware write speed.\n'
-    for i in range(1,1001):
+    for i in range(1,501):
         tot += len(s)
         f.write(s)
 
@@ -347,7 +399,7 @@ def test():
     print("Read speed=", tot/tr/1024, "kb/sec")
     print("File Size=", os.stat('/sd/sdtest.txt')[6])
 
-    os.umount("/sd")
-    spi.deinit()
+    SDCard.UMount()
+
 test()
 '''

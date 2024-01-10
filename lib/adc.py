@@ -1,11 +1,10 @@
-import uctypes, array, time, math
+import uctypes, array, time, math, rp2
 from machine import mem32, mem16
 from dma import Dma
 from utils import *
 
 import micropython
 micropython.alloc_emergency_exception_buf(100)
-
 
 # Receives adc values from dma1 in 4 bytes format, 
 # outputs 2 bytes to dma2 that send to 16 bits buffer
@@ -59,6 +58,7 @@ class Adc:
 		self.bits = bits
 		self.buf = array.array('H', [0])
 		self.buf_size = buf_size
+		self.sm = None
 		
 		if type(chs) == type([]):
 			self.n = len(chs)
@@ -104,6 +104,14 @@ class Adc:
 			time.sleep_us(self.t_us)
 		return self.buf
 
+	# to help player, the first 3 words in a file can be set to:
+	# w1: 0xFABC (Magic value indicating header is present)
+	# w2: sampling rate (ADC sampling rate so per channel is w2/ch_count)
+	# w3 channel mask bit 0,1,2,3,4 (4 for temperature sensor)
+	def WriteFileHdr(self, file):
+		hdr =  array.array('H', [0xFABC, self.fs, self.ch_mask] )
+		file.write(hdr)
+	
 	# If file object is present, will write to file. CB(buf) will be called if provided
 	#@micropython.native
 	def Start(self, file=None, CB=None, pio_sm=0): 
@@ -119,14 +127,16 @@ class Adc:
 
 		PIOTX = 0x50200010 + 4 * pio_sm
 
-		# setup state machine
-		self.sm = rp2.StateMachine(pio_sm, adc_bridge) 
-		self.irq = self.sm.irq(self.buf_irq)
-		self.sm.active(1)
-		self.sm.put(bs) # set buffer size to get timely IRQs 
+		# setup state machine (if not already done)
+		if self.sm is None:
+			self.sm = rp2.StateMachine(pio_sm, adc_bridge) 
+			self.irq = self.sm.irq(self.buf_irq)
+		else:
+			self.sm.restart()
 
-		# self.TstPIO() # debug to check if PIO and its FIFOs are working
-		# return
+		self.sm.active(1)
+
+		self.sm.put(bs) # set buffer size to get timely IRQs 
 
 		# prepare ping pong. 
 		# Need 2x, but allocate 3x to insure dma wrap alignment is possible
@@ -137,8 +147,6 @@ class Adc:
 		bs_bits = int(bs_bits)
 		mask = 2**bs_bits-1
 		ofst = (mask + 1) - (s0 & mask)
-
-		#print(hex(s0), bin(mask), ofst )
 
 		s0 += ofst # proper start address. osft is in bytes
 
@@ -193,13 +201,9 @@ class Adc:
 		mem32[Adc.CS] = self.cs  # start adc		
 
 	def Stop(self):
-		self.cs &= ~8 # stop RROBIN: MANY =  0
+		self.cs &= ~8 # stop acquisition. RROBIN: MANY =  0
 		mem32[Adc.CS] = self.cs
-
-		self.dma_adc.Enable(0)
-		self.dma_ram.Enable(0)
-		lst = [self.dma_adc.ch, self.dma_ram.ch]
-		Dma.Abort(lst)
+		Dma.Abort([self.dma_adc.ch, self.dma_ram.ch])
 		self.dma_adc.DeInit()
 		self.dma_adc.DeInit()
 		self.sm.active(0)
@@ -263,13 +267,24 @@ while True:
 '''
 
 '''
-# test dma interface
-machine.freq(260000000)
-print('\33c') # clear screen
-adc = Adc(chs=0, fs = 22000, buf_size=2048) 
-f = open("/mictest.bin", "w")
-adc.Start(file=f)
-time.sleep(5)
-adc.Stop()
-f.close()
+# to switch off SD Card test, comment import and SDCard.xx() lines
+# test dma interface 
+def tst():
+	print('\33c') # clear screen
+	machine.freq(260000000)
+	from sdcard import SDCard
+
+	SDCard.Mount()
+	adc = Adc(chs=0, fs = 22000, buf_size=2048)
+
+	f = open("/sd/test.bin", "w")  # change to '/sd/test.bin' for sd card
+	adc.WriteFileHdr(f)
+	adc.Start(file=f)
+	print('Starting acquisition 5 sec...')
+	time.sleep(5)
+	adc.Stop()
+	f.close()
+	SDCard.UMount()
+	print('Done')
+tst()
 '''
