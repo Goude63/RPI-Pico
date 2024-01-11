@@ -27,7 +27,7 @@ def main():
 		fno += 1
 
 	adc = Adc(chs=0, fs = 22000, buf_size=2048)
-	btn_up = Pin(9,Pin.IN,Pin.PULL_UP) # ground GPIO8 to stop
+	btn_up = Pin(9,Pin.IN,Pin.PULL_UP) # ground GPIO9 to stop
 
 	led.off()
 	run = True
