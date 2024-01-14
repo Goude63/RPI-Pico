@@ -3,7 +3,7 @@
 #  UI: Press button to start/stop recording (red led = record)
 #      Long press button to quit. Led off when program ends
 #  Also file auto split every hour. Led blue = stand-by/not recording
-#  SD Card on SPI0 GP0-GP3, button on GP9 -> gnd 
+#  SD Card on SPI0 GP0-GP3, button on GP13 -> gnd 
 #  GP26: Mic with DC offset ~1.25V @ ~2.5V pk2pk (on loudest sound)
 
 from adc import Adc
@@ -31,7 +31,7 @@ def main():
 		fno += 1
 
 	adc = Adc(chs=0, fs = 44100, buf_size=4096)
-	btn_up = Pin(13,Pin.IN,Pin.PULL_UP) # ground GPIO9 to stop
+	btn_up = Pin(13,Pin.IN,Pin.PULL_UP) # ground GP13 to stop
 	gain = Pin(9,Pin.OUT,value=0) # gain option (1: 40db, 0: 50db, float: 60db)
 
 	led.off()
