@@ -106,10 +106,10 @@ class Adc:
 
 	# to help player, the first 3 words in a file can be set to:
 	# w1: 0xFABC (Magic value indicating header is present)
-	# w2: sampling rate (ADC sampling rate so per channel is w2/ch_count)
+	# w2: sampling rate/10 (ADC sampling rate so per channel is w2*10/ch_count)
 	# w3 channel mask bit 0,1,2,3,4 (4 for temperature sensor)
 	def WriteFileHdr(self, file):
-		hdr =  array.array('H', [0xFABC, self.fs, self.ch_mask] )
+		hdr =  array.array('H', [0xFABC, self.fs//10, self.ch_mask] )
 		file.write(hdr)
 	
 	# If file object is present, will write to file. CB(buf) will be called if provided

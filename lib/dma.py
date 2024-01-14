@@ -54,7 +54,7 @@ class Dma:
         for ch in chs: 
             bits |= 1 << ch
             ch_addr = Dma.BASE_DMA + 0x40 * ch
-            mem32[ch_addr + 0x10] &= ~0x1000001
+            mem32[ch_addr + 0x10] &= ~1 # disable channel
 
         mem32[Dma.ABORT_REG] = bits
         # wait all ch aborted
