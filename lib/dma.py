@@ -12,15 +12,14 @@ class Dma:
 	
     # check all DMA channels (enabled buisy...)
     @staticmethod
-    def Scan(max=11): 
+    def Scan(max=11,cr=True): 
         for ch in range(0,max):
             ch_addr = Dma.BASE_DMA + 0x40 * ch
             ctrl = mem32[ch_addr + 0x10] # non trig
             print('Ch:', ch, end='\t')
             print('EN: ', ctrl & 1, '\tBUSY:', (ctrl >> 24) & 1, end = '\t')
             print('RD_Addr: ', hex(mem32[ch_addr]), '\tWR_Addr:', hex(mem32[ch_addr+4]))
-        print()
-
+        if cr: print()
     
     # ch -1 means auto choose available channel
     def __init__(self, ch=-1, data_size = 1):
@@ -59,7 +58,12 @@ class Dma:
         mem32[Dma.ABORT_REG] = bits
         # wait all ch aborted
         while mem32[Dma.ABORT_REG] != 0: pass  
-        
+
+    #@micropython.viper
+    def Busy(self):
+        #ptr= ptr32(self.CtrlReg)
+        return (mem32[self.CtrlReg]>> 24) & 1
+
     @micropython.viper
     def SetWriteadd(self, add: uint):
         ptr= ptr32(self.WriteRegister)

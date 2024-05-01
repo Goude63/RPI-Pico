@@ -2,7 +2,9 @@ from dma import Dma
 from utils import *
 import os,gc,time,machine,struct
 import array, math, uctypes, random
-from machine import PWM, Pin,mem32
+from machine import PWM, Pin, mem32, UART, WDT
+
+DEBUG = False
 
 # Receives PWM values from main code in 2 bytes/u16 format,
 # received in two bytes (LSB,MSB) 
@@ -52,7 +54,52 @@ class Alexa:
 			x = f[0].find('.u16')
 			if x>0:
 				self.words[f[0][:x]] = f[0] # filename for each word
+
+		# initialize uart
+		self.uart = UART(0, baudrate=230400,
+			tx=Pin(12), rx=Pin(13),
+			txbuf=64, rxbuf=128, timeout_char=10,
+			timeout=10, stop=1)
+		self.rx_buf = ''
+
+		# to simplify debugging, wdt just enabled on rx cmd
+		self.wdt = False 
 		gc.collect()
+	
+	def FeedWDT(self):
+		if self.wdt: self.wdt.feed()
+	
+	# check if request available. Msg start: '~', msg end :'.', sapace: ','
+	def ParseCH9120(self):
+		rx_cnt = self.uart.any()
+		if rx_cnt > 0:			
+			rb = self.rx_buf
+			rb += self.uart.read().decode('ASCII')
+			# remove anything preceeding '~'
+			x = rb.find('~')
+			if x>=0:
+				if x>0: rb = rb[x:]
+
+				#check if message is complete: '.' present
+				x = rb.find('.')
+				if x>0: 
+					if (not self.wdt) and not DEBUG: 
+						self.wdt = WDT(timeout=8000)  # just enable watchdog on rx
+						print('WDT started')
+
+					req = rb[1:x].split(',')
+					rb = rb[x+1:]
+					if self.Play(req):
+						self.uart.write('~ok.')
+					else:
+						self.uart.write('~error.')
+
+			self.rx_buf = rb
+
+	def Run(self):
+		while True:
+			self.FeedWDT()
+			self.ParseCH9120()
 	
 	def Play(self, seq, pause_ms = 150):
 		# Do not execute if any word not in dictionnary
@@ -60,6 +107,7 @@ class Alexa:
 			if not word in self.words.keys():
 				return False
 		for word in seq:
+			self.FeedWDT()
 			gc.collect()
 			with open(self.words[word],'rb') as file:
 					wav = file.read()
@@ -83,9 +131,12 @@ class Alexa:
 			self.running = False
 	
 	def DeInit(self):
+		self.uart.deinit()
 		self.Stop()
 		self.__del__()
-
+	
+	def __del__(self):
+		self.DeInit()
 
 if __name__ == "__main__":
 	mhz, khz = (1000000, 1000)
@@ -93,8 +144,8 @@ if __name__ == "__main__":
 	alexa = Alexa()
 	print('Zero=',alexa.zero)
 
-	alexa.Play(['alexa','off','alex'])
-
+	#alexa.Play(['alexa','off','alex'])
+	alexa.Run()
 
 	
 

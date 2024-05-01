@@ -7,8 +7,9 @@ class FIFO(object):
         self.wr_ix = 0
         self.rd_ix = 0
         
-    def write(self, mvd):
-        l = len(mvd)
+    def write(self, data):
+        mvd = memoryview(data)
+        l = len(data)
         if l > self.size - self.count: return False
         self.count += l
         
@@ -41,8 +42,8 @@ class FIFO(object):
         return r
 
 #test it
-    
-f = FIFO(25)
-for n in range(20):
-    if not(f.write(memoryview(b'Bonjour!'))):print("*")
-    print(f.read(5))
+if __name__ == "__main__":    
+    f = FIFO(25)
+    for n in range(20):
+        if not(f.write('Bonjour!')):print("*")
+        print(f.read(5))

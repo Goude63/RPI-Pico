@@ -25,12 +25,12 @@ def adc_bridge():
 	pull(block)    # retrieve adc value in 32 bits format
 
 	mov(isr,osr)
-	in_(null,24)
-	push(block)
+	in_(null,24)   # move ADC lower 8 bits to msbyte of isr
+	push(block)    # send lower 8 bits 
 	mov(isr,osr)
-	in_(null,16)
+	in_(null,16)   # move ADC hi 4 bits to msbyte of isr
 	push(block)
-	jmp(y_dec,'next')  # no irq until 
+	jmp(y_dec,'next')  # no irq until buffer size reached
 	irq(0)
 	# wrap() # Not needed, program auto wraps on end
 
@@ -132,7 +132,7 @@ class Adc:
 			self.sm = rp2.StateMachine(pio_sm, adc_bridge) 
 			self.irq = self.sm.irq(self.buf_irq)
 		else:
-			self.sm.restart()
+			self.sm.restart()  # restart to allow re-setting the buffer size
 
 		self.sm.active(1)
 
@@ -222,7 +222,7 @@ class Adc:
 		if self.file:
 			self.file.write(mv)
 		else:
-			CB(mv)
+			self.CB(mv)
 		i = int(self.ppix)
 		i = 1 - i
 		self.ppix = i
