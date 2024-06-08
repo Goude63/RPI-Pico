@@ -1,8 +1,9 @@
 
 import rp2, gc, time, network, socket, ubinascii, urequests, sys, math, utime
 from machine import Pin
-import st7789, tft_config
+import st7789, tft_config, micropython, json, io
 import romancs as font
+from lifepower import LifePower
 
 PAGES = [
 	["Vue d'ensemble:",('PV(W)','PV','W',st7789.YELLOW),('AC_out(W)','Inv','W',st7789.MAGENTA), 
@@ -101,7 +102,7 @@ def hand_polygon(length, radius):
         (0,0)
     ]
 
-def watch():
+def watch(lp, ac):
 	global tft
 	'''
 	Draw analog watch face and update time
@@ -220,9 +221,71 @@ def watch():
 		while last == utime.time():
 			if (btns.up.value() and btns.KeyA.value() and btns.down.value() and 
 				btns.sel.value() and btns.KeyB.value()):
-				utime.sleep_ms(50)
+				MySleep(50, lp, ac)
 			else:
 				n = 1000
+
+#Check for power failure and water heater 110V/220V/0V
+@micropython.native
+def chk_ac(p, n=32, v0=220):
+    x = 0
+    for i in range(0,n): 
+        if (p.value()): x += 1
+        time.sleep_us(500)   
+    # print(x*100/n, end='-')
+    if x == 0: return v0
+    elif x == n: return 0
+    else: return 110
+
+def SendPack(lp):
+	s = EncodeURI(json.dumps(lp.Pack))
+#	r = urequests.get('http://192.168.1.189/rest/Eg4Ctrl/Updt/Pack?' + s)
+	r = urequests.get('http://192.168.1.202/rest/Eg4Ctrl/Updt/Pack?' + s)
+	d=r.content.decode('ascii')
+	r.close
+
+def SendAC(ac):
+	s = EncodeURI(json.dumps({"AC_ChEau": ac['ch_eau'], "AC_Hydro": ac['hydro']}))
+#	r = urequests.get('http://192.168.1.189/rest/Eg4Ctrl/Updt/AC?' + s)
+	r = urequests.get('http://192.168.1.202/rest/Eg4Ctrl/Updt/AC?' + s)
+	d=r.content.decode('ascii')
+	r.close
+
+# sleep that checks for new lifepower messages
+@micropython.native
+def MySleep(ms, lp, ac):  # returns true if new message from lifepower
+	start = time.ticks_ms()
+	while time.ticks_diff(time.ticks_ms(), start) <= ms:
+		if lp.ProcessMsg():	SendPack(lp)
+		else: 
+			x = chk_ac(ac['pin_che'])
+			chng =  (x != ac['ch_eau'])
+			ac['ch_eau'] = x
+			x = 0 if ac['pin_eg4'].value() else 110
+			chng |= (ac['hydro'] != x)
+			ac['hydro'] = x
+			if chng: SendAC(ac)
+			time.sleep_us(500)
+
+# limited to space and quotes encoding (to pass JSON data)
+@micropython.native
+def EncodeURI(s):
+	#calculate required buffer size = len s - spaces count + 2 * quote cnt
+	size = len(s)
+	for i in range(0,len(s)):
+		if s[i] == ' ': size -= 1
+		if s[i] == '"': size += 2
+
+	fs = io.StringIO(size)
+
+	for i in range(0,len(s)):
+		if s[i] != ' ':
+			if s[i] == '"': fs.write('%22')
+			else: fs.write(s[i])
+
+	fs.seek(0)
+	return fs.read()
+
 #
 #  Main code
 #
@@ -230,26 +293,30 @@ def main():
 #if True: # when debugging, have easy access to all variables => not in a function = all globals
 	# machine.freq(200000000)
 
-	global font, all, page, tft, wlan, btns
+	global font, all, page, tft, wlan
 
-	page = 0
+	# ac detection info "object"
+	pin_che = Pin(6, Pin.IN)
+	pin_eg4 = Pin(7, Pin.IN)
+	ac = { "pin_eg4" : pin_eg4,	"pin_che" : pin_che, "ch_eau" : -1, "hydro" : -1 }
+
+	lp = LifePower()
 
 	tft = tft_config.config(1, buffer_size=16*32*2)
 	tft.init()
 	tft.fill(st7789.BLACK)
-
 	btns = Buttons()
 
 	rp2.country('CA')
 	wlan = network.WLAN(network.STA_IF)
 	network.hostname("LCD_pico")
-
 	Connect()
 
 	ip4 = ['189', '200']  # ['100'] for debug on pc
 	excpt_cnt = 0
 	run = True
 	rtc_set = False
+	page = 0
 
 	while run:
 		try:
@@ -259,7 +326,6 @@ def main():
 				Connect()
 			if wlan.status() == 3:
 				gc.collect()
-				# print(gc.mem_free())
 				try:
 					for ad4 in ip4:
 						addr = "http://192.168.1." + ad4 + ":8889/"
@@ -297,10 +363,10 @@ def main():
 					if page >= len(PAGES): page = 0
 					elif page < 0: page = len(PAGES) - 1
 					display()
-					time.sleep_ms(400)
-				time.sleep_ms(100)
+					MySleep(400,lp,ac)
+				MySleep(100,lp,ac)
 			if (i>=100) and run: 
-				watch()
+				watch(lp, ac)
 
 		except:
 		#else:
@@ -308,7 +374,6 @@ def main():
 			DoLog('Exceptions count=' + str(excpt_cnt))
 			if excpt_cnt >= 10: machine.reset()
 			time.sleep(1)
-
-# print('\r\n', 'mac=',mac,'  ip=', wlan)
+	tft.fill(st7789.BLACK)
 
 main()

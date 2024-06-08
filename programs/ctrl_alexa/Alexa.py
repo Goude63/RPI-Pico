@@ -38,6 +38,7 @@ class Alexa:
 		self.pwm = PWM(Pin(gpio), freq=fs, duty_u16=32768) # init on center
 		self.zero = mem32[0x4005000c + 0x14 * self.pwm_ch] # actual CC value for zero
 		self.running = True
+		self.last_rx = time.ticks_ms()
 		self.PWMTX = 0x4005000c + 0x14 * self.pwm_ch
 		self.Off()
 
@@ -72,8 +73,15 @@ class Alexa:
 	# check if request available. Msg start: '~', msg end :'.', sapace: ','
 	def ParseCH9120(self):
 		rx_cnt = self.uart.any()
-		if rx_cnt > 0:			
-			rb = self.rx_buf
+		rb = self.rx_buf
+		now = time.ticks_ms()
+		if rx_cnt == 0:
+			# flush buffer if pending unused bytes older than 2 sec
+			if (len(rb)>0) and (time.ticks_diff(now, self.last_rx)>2000):
+				self.rx_buf = ''
+				print('Flushed unused buffer')
+		else: # rx_cnt > 0
+			self.last_rx = now			
 			rb += self.uart.read().decode('ASCII')
 			# remove anything preceeding '~'
 			x = rb.find('~')
@@ -93,7 +101,6 @@ class Alexa:
 						self.uart.write('~ok.')
 					else:
 						self.uart.write('~error.')
-
 			self.rx_buf = rb
 
 	def Run(self):
@@ -118,6 +125,7 @@ class Alexa:
 			time.sleep_ms(pause_ms)
 		self.Off()
 		gc.collect()
+		time.sleep(2)
 		return True
 	
 	def Off(self):
