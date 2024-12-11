@@ -29,6 +29,7 @@ class BME280:
                  i2c_gp=None, i2c_id = 0,
                  i2c_freq=400000,
                  vcc_gp=None, vcc_io=False,
+                 gnd_gp=None,
                  **kwargs):
         # Check that mode is valid.
         if mode not in [BME280_OSAMPLE_1, BME280_OSAMPLE_2, BME280_OSAMPLE_4,
@@ -50,10 +51,12 @@ class BME280:
         if not (vcc_gp is None):
             self.vcc = Pin(vcc_gp, Pin.OUT)
             self.vcc.value(0)
+            if not (gnd_gp is None):
+                self.gnd=Pin(gnd_gp, Pin.OUT)
+                self.gnd.value(0)
             time.sleep_ms(100) # power cycle/reset BME
-            self.vcc.value(1)
-            time.sleep_ms(100)            
-
+            self.vcc.value(1)            
+            time.sleep_ms(100)
         self._mode = mode
         self.address = address
         
@@ -65,9 +68,9 @@ class BME280:
         # load calibration data
         dig_88_a1 = self.i2c.readfrom_mem(self.address, 0x88, 26)
         dig_e1_e7 = self.i2c.readfrom_mem(self.address, 0xE1, 7)
-        self.dig_T1, self.dig_T2, self.dig_T3, self.dig_P1, \
-            self.dig_P2, self.dig_P3, self.dig_P4, self.dig_P5, \
-            self.dig_P6, self.dig_P7, self.dig_P8, self.dig_P9, \
+        self.dig_T1, self.dig_T2, self.dig_T3, self.dig_P1, \r
+            self.dig_P2, self.dig_P3, self.dig_P4, self.dig_P5, \r
+            self.dig_P6, self.dig_P7, self.dig_P8, self.dig_P9, \r
             _, self.dig_H1 = unpack("<HhhHhhhhhhhhBB", dig_88_a1)
  
         self.dig_H2, self.dig_H3 = unpack("<hB", dig_e1_e7)
