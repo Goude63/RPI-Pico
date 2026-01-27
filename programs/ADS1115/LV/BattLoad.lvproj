@@ -29,6 +29,12 @@
 		<Item Name="BackupFile.vi" Type="VI" URL="../BackupFile.vi"/>
 		<Item Name="1CellLog.vi" Type="VI" URL="../1CellLog.vi"/>
 		<Item Name="LM235_Conv.vi" Type="VI" URL="../LM235_Conv.vi"/>
+		<Item Name="GetCfgFile.vi" Type="VI" URL="../GetCfgFile.vi"/>
+		<Item Name="SetCal.vi" Type="VI" URL="../SetCal.vi"/>
+		<Item Name="SetRange.vi" Type="VI" URL="../SetRange.vi"/>
+		<Item Name="SetMode.vi" Type="VI" URL="../SetMode.vi"/>
+		<Item Name="ChkSync.vi" Type="VI" URL="../ChkSync.vi"/>
+		<Item Name="SetScales.vi" Type="VI" URL="../SetScales.vi"/>
 		<Item Name="Dependencies" Type="Dependencies"/>
 		<Item Name="Build Specifications" Type="Build">
 			<Item Name="BattCapacity" Type="EXE">
@@ -44,20 +50,20 @@
 				<Property Name="Bld_excludeInlineSubVIs" Type="Bool">true</Property>
 				<Property Name="Bld_excludeLibraryItems" Type="Bool">true</Property>
 				<Property Name="Bld_excludePolymorphicVIs" Type="Bool">true</Property>
-				<Property Name="Bld_localDestDir" Type="Path">../builds/NI_AB_PROJECTNAME/BattCapacity</Property>
+				<Property Name="Bld_localDestDir" Type="Path">../builds/NI_AB_PROJECTNAME</Property>
 				<Property Name="Bld_localDestDirType" Type="Str">relativeToCommon</Property>
 				<Property Name="Bld_modifyLibraryFile" Type="Bool">true</Property>
 				<Property Name="Bld_previewCacheID" Type="Str">{4BBA27A7-1546-4E03-A868-DC025C690DB8}</Property>
-				<Property Name="Bld_version.build" Type="Int">14</Property>
+				<Property Name="Bld_version.build" Type="Int">16</Property>
 				<Property Name="Bld_version.major" Type="Int">1</Property>
 				<Property Name="Destination[0].destName" Type="Str">BattCapacity.exe</Property>
-				<Property Name="Destination[0].path" Type="Path">../builds/NI_AB_PROJECTNAME/BattCapacity/BattCapacity.exe</Property>
+				<Property Name="Destination[0].path" Type="Path">../builds/NI_AB_PROJECTNAME/BattCapacity.exe</Property>
 				<Property Name="Destination[0].preserveHierarchy" Type="Bool">true</Property>
 				<Property Name="Destination[0].type" Type="Str">App</Property>
 				<Property Name="Destination[1].destName" Type="Str">Support Directory</Property>
-				<Property Name="Destination[1].path" Type="Path">../builds/NI_AB_PROJECTNAME/BattCapacity/data</Property>
+				<Property Name="Destination[1].path" Type="Path">../builds/NI_AB_PROJECTNAME/data</Property>
 				<Property Name="DestinationCount" Type="Int">2</Property>
-				<Property Name="Source[0].itemID" Type="Str">{DE06B16F-AE56-4FFE-A185-0B71EECFD45D}</Property>
+				<Property Name="Source[0].itemID" Type="Str">{1810E52F-7AFC-4DA6-A643-44686447233F}</Property>
 				<Property Name="Source[0].type" Type="Str">Container</Property>
 				<Property Name="Source[1].destinationIndex" Type="Int">0</Property>
 				<Property Name="Source[1].itemID" Type="Ref">/My Computer/BattLoad.vi</Property>
