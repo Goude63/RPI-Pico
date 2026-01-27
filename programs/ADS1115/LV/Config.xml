@@ -7,7 +7,7 @@
 <Refnum>
 <Name>Pico</Name>
 <RefKind>VISA</RefKind>
-<Val>COM8</Val>
+<Val>COM5</Val>
 </Refnum>
 <EW>
 <Name>Range</Name>
@@ -17,14 +17,14 @@
 <Choice>2.05</Choice>
 <Choice>4.1</Choice>
 <Choice>6.2</Choice>
-<Val>5</Val>
+<Val>4</Val>
 </EW>
 <EW>
 <Name>Mode</Name>
 <Choice>R1 Only</Choice>
 <Choice>Parallel</Choice>
 <Choice>Serial</Choice>
-<Val>1</Val>
+<Val>0</Val>
 </EW>
 <Array>
 <Name>R</Name>
