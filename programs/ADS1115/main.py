@@ -4,13 +4,12 @@ from machine import Pin, ADC
 import time,json
 import st7789, tft_config
 import tft_buttons as Buttons
-# import vga1_8x16 as font
 import romancs as font
-
+import array
 
 FIX_X  = -20
 FIX_Y  = 0
-MAXX   = 284
+MAXX   = 320   # must be even
 SPH    = 3600
 PUSHED   = 0
 RELEASED = 1
@@ -22,7 +21,7 @@ GREY   = st7789.color565(191,191,191)
 BLACK  = st7789.BLACK
 
 RNGV = (0.256, 0.512, 1.024, 2.048, 4.096, 6.144)
-MName = ['R1','Par', 'Ser']
+MName = ['R1','Parallel', 'Serial']
 KeyTrack = {"Last":-1, "n":0, "Max":0}
 
 # module level "globals"
@@ -32,40 +31,160 @@ adc = ADC(27)
 tft = tft_config.config(3)
 btns = Buttons.Buttons()
 
+cfg   = {"Mode" : 0,	"R":[0.21627314239740, 0.10751858502626, 0.43486739695072], "Range":5,
+		  "VScale":[3.0, 3.7], "IScale": [4.0, 15.0] }
 
-cfg = {
-	"Mode" : 0,	"R":[0.21627314239740, 0.10751858502626, 0.43486739695072], "Range":5,
-}
+state = {"V" : 0 ,"A" : 0, "Ah" : 0, "Wh" : 0, "T":0, "Error": 0}
 
-state = {
-	"V" : 0 ,"A" : 0, "Ah" : 0, "Wh" : 0, "Graph": [] 
-}
+Graph = {"Varr": array.array('f',[0] * MAXX), "Iarr": array.array('f',[0] * MAXX), 
+	 "Xix" : 0, "PtPerPix": 1, "n": 0 , "y0":80, "h":100}
+
+def InitGraph(ix = 0):
+	Graph["Varr"][ix] = 0
+	Graph["Iarr"][ix] = 0
+	Graph["Xix"] = ix
+	Graph["n"] = 0
+	if ix==0: Graph["PtPerPix"] = 1 # when we clear everything
+
+@micropython.native
+def DrawGraphPixel(x1,g,c):
+	n = g + "arr"
+	s = cfg[g + "Scale"]
+	y1 = Graph[n][x1]
+	y0 = y1 if x1==0 else Graph[n][x1-1]
+	if not s[0]<y0<s[1]: y0 = y1
+	x0 = max(0,x1)
+
+	if s[0]<y1<s[1]:
+		y1 = Graph["y0"] + Graph["h"] - round(Graph["h"] * (y1 - s[0]) / (s[1]-s[0]))
+		y0 = Graph["y0"] + Graph["h"] - round(Graph["h"] * (y0 - s[0]) / (s[1]-s[0]))
+		tft.line(x0,y0,x1,y1,c)
+
+def RedrawGraph():
+	y = Graph["y0"]+4
+	tft.fill_rect(0, y, MAXX, Graph["h"] + 18  , BLACK)
+	Display(0,y, cfg["VScale"][1], sc=0.75, fg=RED)
+	Display(0,y+Graph["h"]+8, cfg["VScale"][0], sc=0.75, fg=RED)
+	Display(-1,y, cfg["IScale"][1], sc=0.75, fg=BLUE)
+	Display(-1,y+Graph["h"]+8, cfg["IScale"][0], sc=0.75, fg=BLUE)
+
+	for ix in range(Graph["Xix"]):
+		DrawGraphPixel(ix, "V", RED)
+		DrawGraphPixel(ix, "I", BLUE)	
+
+@micropython.native
+def GraphAddPt(v,i):
+	xix = Graph["Xix"]
+	Graph["Varr"][xix] += v
+	Graph["Iarr"][xix] += i
+	Graph["n"] += 1
+	n = Graph["n"]
+	if n == Graph["PtPerPix"]: # time to draw pixel		
+		Graph["n"] = 0
+		v = Graph["Varr"][xix] / n
+		Graph["Varr"][xix] = v
+		DrawGraphPixel(xix, "V", RED)
+
+		v = Graph["Iarr"][xix] / n
+		Graph["Iarr"][xix] = v
+		DrawGraphPixel(xix, "I", BLUE)
+
+		Graph["Xix"] += 1  
+		if Graph["Xix"] == MAXX: #  re-scale x by half
+			wix = 0
+			for xix in range(0, MAXX, 2):
+				Graph["Varr"][wix] = (Graph["Varr"][xix] + Graph["Varr"][xix+1]) / 2.0
+				Graph["Iarr"][wix] = (Graph["Iarr"][xix] + Graph["Iarr"][xix+1]) / 2.0
+				wix += 1
+			InitGraph(MAXX // 2)
+			Graph["PtPerPix"] += Graph["PtPerPix"] # exponential re-scaling			
+			RedrawGraph()
+
+		# prepare next pixel summing
+		xix = Graph["Xix"]
+		Graph["Varr"][xix] = 0   
+		Graph["Iarr"][xix] = 0
+
+@micropython.native
 def ProcessMessages():
 	msg=usb.Scan().lower()
 	if (msg): 
 		if (msg[0:10]=='set_range='):
-			r = int(msg[10:])
-			if (0<=r<=5):
-				cfg["Range"] = r 
+			try: 
+				r = int(msg[10:])
+				if (0<=r<=5):
+					cfg["Range"] = r 
+					DisplayCfg()
+					ads.setVoltageRange_mV(ADS1115_RNG[r])
+					print('Range set to ix',r)
+			except: pass
+
+		if msg[0:9]=='set_mode=':
+			try: 
+				r = int(msg[9:]) 				
+				cfg["Mode"] = r
 				DisplayCfg()
-				ads.setVoltageRange_mV(ADS1115_RNG[r])
-				print('Range set to ix',r)
-				
+				print('Mode set to ix', r)
+			except: pass
+
+
+		if msg[0:9]=='set_cal=(':
+			try: 
+				r = msg[9:-1].split(',') 			
+				fr = [float(item) for item in r]
+				cfg["R"] = fr 
+				DisplayCfg()
+				print('Cal set to: ',fr)
+			except: pass
+
+		if msg[0:12]=='set_scales=(':
+			try: 
+				r = msg[12:-1].split(',') 			
+				fr = [float(item) for item in r]
+				cfg["VScale"] = fr[0:2]
+				cfg["IScale"] = fr[2:]
+				DisplayCfg()
+				print('scales set: ', r)
+				RedrawGraph()
+			except: pass
+
+		if msg=='save_cfg': 				
+			print('saved config')
+			SaveCfg()
 	return msg
 
+def ShowError(ErrMsg = 'Error'):
+	state["Error"] = 1
+
+	if isinstance(ErrMsg, str): ErrMsg = [ErrMsg]
+	w = 0
+	for s in ErrMsg: w = max(w,tft.draw_len(font, s))
+	h = round(font.HEIGHT * 1.2)
+	y = (tft.height() - h * len(ErrMsg)) // 2
+	x = (MAXX - w) // 2 
+	tft.fill_rect(x - 5, y - 2 , w + 10, h * len(ErrMsg) + 4, RED)
+	y += 12
+	for s in ErrMsg: 
+		tft.draw(font, s, x, y, st7789.WHITE)
+		y += h
+
 def SaveCfg():
-	with open("config.json", "w") as f:
-		json.dump(cfg, f)
+	try:
+		with open("config.json", "w") as f:
+			json.dump(cfg, f)
+	except:
+		ShowError(['Error while','writing:','"config.json"'])
 
 def LoadCfg():
+	global cfg
 	try:
 		with open("config.json", "r") as f:
-			cfg = json.load(f)
+			cfg = json.load(f)		
 	except:
-		SaveCfg()
+		pass  # if no config file, use defaults
 
-# Temperature cleanup code 
-# rel tolerance: relative average to be exluded when n >= 10
+# Temperature cleanup code for pico noisy adc
+# tol: tolerance relative to average that will be exluded when n >= 10
 @micropython.native
 def ReadTemp(n=200, tol = 0.05): 
 	tot = 0
@@ -75,7 +194,7 @@ def ReadTemp(n=200, tol = 0.05):
 		tot += t
 
 	avg = tot / n
-	# Redo but this time exclude outliers
+	# Redo but this time exclude outliers (far from avg)
 	if (n>=10):
 		tot = 0
 		cnt = 0
@@ -91,7 +210,7 @@ def ReadTemp(n=200, tol = 0.05):
 
 	return avg
 
-def Display(x, y, text, fg = st7789.WHITE, bg = st7789.BLACK,  sc = 1.5):
+def Display(x, y, text, fg = st7789.WHITE, bg = st7789.BLACK,  sc = 1.3):	
 	if not isinstance(text, str): text = str(text)	
 	w =  tft.draw_len(font, text, sc)
 	if x < 0: x = MAXX - w + x
@@ -99,30 +218,47 @@ def Display(x, y, text, fg = st7789.WHITE, bg = st7789.BLACK,  sc = 1.5):
 	tft.draw(font, text, x, y, fg, sc )
 
 def DisplayTop():
-	h = int(round(font.HEIGHT * 1.5))
+	if state["Error"]: return
+
+	h = int(round(font.HEIGHT * 1.3))
 	y = 2
 
-	tft.fill_rect(0, y+6, MAXX//2, h, st7789.BLACK)
+	tft.fill_rect(0, y+6, MAXX//2-40, h-4, st7789.BLACK)
+	# tft.rect(0, y+6, MAXX//2-40, h-4, st7789.WHITE)
 	Display(5, y+20, f'{state["V"]:.3f}V', fg=RED)
 
-	tft.fill_rect(MAXX//2+1, y+6, MAXX//2, h, st7789.BLACK)
+	tft.fill_rect(MAXX//2+35, y+6, MAXX//2-35, h-4, st7789.BLACK)
+	# tft.rect(MAXX//2+35, y+6, MAXX//2-35, h-4, st7789.WHITE)
 	Display(-26, y+20, f'{state["A"]:.2f}A', fg=BLUE)
 
 	y = 30
-	tft.fill_rect(0, y+6, MAXX//2, h, st7789.BLACK)
+	tft.fill_rect(0, y+6, MAXX//2-40, h-4, st7789.BLACK)
+	# tft.rect(0, y+6, MAXX//2-40, h-4, st7789.WHITE)
 	v = state["Wh"]
-	fv =f'{v:.2f}Wh' if v<10 else f'{v:.0f}Wh'
+	fv =f'{v:.2f}Wh' if v<10 else f'{v:.1f}Wh'
 	Display(5, y+20, fv, fg=ORANGE)
 
 	v = state["Ah"]
 	fv =f'{v:.2f}Ah' if v<10 else f'{v:.1f}Ah'
-	tft.fill_rect(MAXX//2+1, y+6, MAXX//2, h, st7789.BLACK)
+	tft.fill_rect(MAXX//2+35, y+6, MAXX//2-35, h-4, st7789.BLACK)
+	# tft.rect(MAXX//2+35, y+6, MAXX//2-35, h-4, st7789.WHITE)
 	Display(-1, y+20, fv, fg=GREEN)
 
+	y = 16
+	v = state["T"]
+	fv =f'{v:.1f} '
+	if v<0: fv = '--'
+	w =  tft.draw_len(font, fv, 1.2)
+	x0 = (MAXX-w)//2
+	tft.fill_rect(MAXX//2-36, y+2, 68, 28, st7789.BLACK)
+	Display(x0, y+20, fv, fg=st7789.YELLOW, sc = 1.2)
+	tft.circle(x0+w-11, y+6, 3, st7789.YELLOW)
+
 def DisplayCfg():
+	if state["Error"]: return
 	tft.fill_rect(0, 210, MAXX, font.HEIGHT, st7789.BLACK)
 	Display(1, 220, f'Mode:{MName[cfg["Mode"]]}', fg=GREY, sc=1)
-	Display(MAXX//2, 220, f'Range:{RNGV[cfg['Range']]}', fg=GREY, sc=1)
+	Display(-1, 220, f'Range:{RNGV[cfg['Range']]}', fg=GREY, sc=1)
 
 @micropython.native
 def Cumulate(vals, dt):
@@ -135,34 +271,55 @@ def Cumulate(vals, dt):
 	state["A"] = i
 	state["V"] = v
 	state["Ah"] += i * dt
-	state["Wh"] += v * i * dt
+	state["Wh"] += max(0,v * i * dt)
+	GraphAddPt(v, i)
 
 def ExecBtnPress(Keys):
 	#tft.fill_rect(100, 100, 200, 30, st7789.BLACK)
 	#Display(100,120,f'{Keys:04b}')
 	if Keys == 2 or Keys == 8:
 		d = 1 if Keys == 2 else -1
+		old = cfg["Range"]
 		cfg["Range"] += d
 		if cfg["Range"]>5: cfg["Range"] = 5 
 		if cfg["Range"]<0: cfg["Range"] = 0
+		if old != cfg["Range"] : print(f'>Range:{cfg["Range"]}')
 		DisplayCfg()
 		ads.setVoltageRange_mV(ADS1115_RNG[cfg["Range"]])
 
 	if Keys == 1 or Keys == 4:
 		d = 1 if Keys == 1 else -1
+		old = cfg["Mode"] 
 		cfg["Mode"] += d
 		if cfg["Mode"]>2: cfg["Mode"] = 0 
 		if cfg["Mode"]<0: cfg["Mode"] = 2
+		if old != cfg["Mode"] : print(f'>Mode:{cfg["Mode"]}')
 		DisplayCfg()
 	if Keys == 3:
 		SaveCfg()
-	if Keys == 10:
+	if Keys == 5:
 		state["Ah"] = 0
 		state["Wh"] = 0
+		InitGraph()
+		RedrawGraph()
+	if Keys == 10:
+		ShowError(['Trois lignes','message','assez long'])
 
 def CheckKeys():	
 	Keys = btns.key1.value() + (btns.key2.value() << 1) + (btns.key3.value() << 2) + (btns.key4.value() << 3)
 	Keys ^= 0xF
+
+	err = state["Error"]  # 0 no err0r, 1: wait any button pressed, 2: wait release
+	if err:
+		if Keys == 0:
+			if err == 2: # any button was pressed and released. hide error
+				state["Error"] = 0  # 
+				tft.fill(st7789.BLACK)
+				DisplayTop()
+				DisplayCfg()
+			return  # wait for keypressed
+		if Keys > 0 and err == 1: state["Error"] = 2
+		return
 
 	# actions are on release to allow multi button press
 	if Keys == 0:
@@ -176,6 +333,8 @@ def CheckKeys():
 	elif Keys > 0 and Keys == KeyTrack["Last"]:
 		KeyTrack["n"] += 1
 
+import math 
+
 # @micropython.native # comment when debugging to get error line numbers
 def main():
 	tft.init()
@@ -183,11 +342,10 @@ def main():
 
 	LoadCfg()
 	DisplayCfg()
-
-	# tst()
+	RedrawGraph()
 
 	Avg_Cnt = 64
-	delay = 2000000
+	delay = 2000000 # us
 
 	machine.freq(250000000)
 	ads.setAvgCNt(Avg_Cnt)
@@ -197,12 +355,16 @@ def main():
 	Chnls = (0, 1, 7) # AIN0, AIN1, AIN0-AIN1 (R1, R1+R2, V)
 	t0 = time.ticks_us()
 
+	# x = 0  # to debug graph
 	while(True):
 		DisplayTop()
 		while time.ticks_diff(time.ticks_us(), t0) < delay:
 			ProcessMessages()
 			CheckKeys()
 			time.sleep_ms(10)
+
+			# to debug graph function
+			# v = 3.3+0.3*math.sin(x); i = 7+4*math.cos(0.5*x); GraphAddPt(v, i);	x += 0.1
 
 		t1 = time.ticks_us()
 		dt = time.ticks_diff(t1, t0) / 1000000
@@ -211,6 +373,7 @@ def main():
 		rt = round(ReadTemp(),1) # resistance temperature
 		vals = ads.readMulti(Chnls) 
 		print(vals + (rt,))
+		state["T"] = rt
 		Cumulate(vals, dt)	
 				
 main()

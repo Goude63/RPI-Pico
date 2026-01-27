@@ -4,7 +4,7 @@
 import sys,select
 
 class USBCOM(object):
-	def __init__(self, StartSymb=b'#', EndSymb=b'*', BufSize=32, DisableCtrlC=False):
+	def __init__(self, StartSymb=b'#', EndSymb=b'*', BufSize=128, DisableCtrlC=False):
 		self.BufSize = BufSize
 		self.Buf = bytearray(BufSize)  # Buf will hold one message excluding Start/End Symbols
 		self.Start = StartSymb
