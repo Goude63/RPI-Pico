@@ -16,6 +16,7 @@ RELEASED = 1
 RED    = st7789.color565(255,127,127)
 ORANGE = st7789.color565(255,191,191)
 BLUE   = st7789.color565(127,127,255)
+AUTOSC = st7789.color565(32,32,128)
 GREEN  = st7789.color565(127,255,127)
 GREY   = st7789.color565(191,191,191)
 BLACK  = st7789.BLACK
@@ -32,7 +33,7 @@ tft = tft_config.config(3)
 btns = Buttons.Buttons()
 
 cfg   = {"Mode" : 0,	"R":[0.21627314239740, 0.10751858502626, 0.43486739695072], "Range":5,
-		  "VScale":[3.0, 3.7], "IScale": [4.0, 15.0] }
+		  "AutoScale":1, "VScale":[3.0, 3.7], "IScale": [4.0, 15.0] }
 
 state = {"V" : 0 ,"A" : 0, "Ah" : 0, "Wh" : 0, "T":0, "Error": 0}
 
@@ -62,15 +63,40 @@ def DrawGraphPixel(x1,g,c):
 
 def RedrawGraph():
 	y = Graph["y0"]+4
-	tft.fill_rect(0, y, MAXX, Graph["h"] + 18  , BLACK)
-	Display(0,y, cfg["VScale"][1], sc=0.75, fg=RED)
-	Display(0,y+Graph["h"]+8, cfg["VScale"][0], sc=0.75, fg=RED)
-	Display(-1,y, cfg["IScale"][1], sc=0.75, fg=BLUE)
-	Display(-1,y+Graph["h"]+8, cfg["IScale"][0], sc=0.75, fg=BLUE)
-
+	tft.fill_rect(0, y-5, MAXX, Graph["h"] + 23  , BLACK)
+	# tft.rect(0, y-5, MAXX, Graph["h"] + 23  , st7789.WHITE)
+	Display(0,y, round(cfg["VScale"][1],1), sc=0.75, fg=RED)
+	Display(0,y+Graph["h"]+8, round(cfg["VScale"][0],1), sc=0.75, fg=RED)
+	Display(-1,y, round(cfg["IScale"][1],1), sc=0.75, fg=BLUE)
+	Display(-1,y+Graph["h"]+8, round(cfg["IScale"][0],1), sc=0.75, fg=BLUE)
+	if cfg["AutoScale"]:
+		tft.rotation(0)		
+		Display(y+Graph["h"]//2 - 30, 10, '- auto -', sc=0.6, fg=AUTOSC)
+		tft.rotation(3)
 	for ix in range(Graph["Xix"]):
 		DrawGraphPixel(ix, "V", RED)
 		DrawGraphPixel(ix, "I", BLUE)	
+
+def AutoScale(g, v):
+	if cfg["AutoScale"] == 0: return # autoscale off
+	g = g.upper()
+	n = Graph["Xix"]
+
+	# set scale for new blank graph (first point)
+	if n == 0:
+		chng = True
+		if abs(v)<=0.5:
+			cfg[g+"Scale"] = [0,0.1]
+		else:
+			cfg[g+"Scale"] = [v * 0.8, v * 1.2]
+	else:
+		chng = True
+		rng = cfg[g+"Scale"]
+		if v > rng[1]: rng[1] = v * 1.2
+		elif v > 0 and v < rng[0]: rng[0] = 0.8 * v
+		else: chng = False
+
+	if chng: RedrawGraph() # re-draw with new scaling
 
 @micropython.native
 def GraphAddPt(v,i):
@@ -79,14 +105,16 @@ def GraphAddPt(v,i):
 	Graph["Iarr"][xix] += i
 	Graph["n"] += 1
 	n = Graph["n"]
-	if n == Graph["PtPerPix"]: # time to draw pixel		
+	if n == Graph["PtPerPix"]: # time to draw new data point		
 		Graph["n"] = 0
 		v = Graph["Varr"][xix] / n
 		Graph["Varr"][xix] = v
+		AutoScale("V", v)
 		DrawGraphPixel(xix, "V", RED)
 
 		v = Graph["Iarr"][xix] / n
 		Graph["Iarr"][xix] = v
+		AutoScale("I", v)
 		DrawGraphPixel(xix, "I", BLUE)
 
 		Graph["Xix"] += 1  
@@ -105,52 +133,49 @@ def GraphAddPt(v,i):
 		Graph["Varr"][xix] = 0   
 		Graph["Iarr"][xix] = 0
 
-@micropython.native
 def ProcessMessages():
 	msg=usb.Scan().lower()
-	if (msg): 
+	if not msg: return msg
+	try: 
 		if (msg[0:10]=='set_range='):
-			try: 
-				r = int(msg[10:])
-				if (0<=r<=5):
-					cfg["Range"] = r 
-					DisplayCfg()
-					ads.setVoltageRange_mV(ADS1115_RNG[r])
-					print('Range set to ix',r)
-			except: pass
-
-		if msg[0:9]=='set_mode=':
-			try: 
-				r = int(msg[9:]) 				
-				cfg["Mode"] = r
+			r = int(msg[10:])
+			if (0<=r<=5):
+				cfg["Range"] = r 
 				DisplayCfg()
-				print('Mode set to ix', r)
-			except: pass
-
-
-		if msg[0:9]=='set_cal=(':
-			try: 
-				r = msg[9:-1].split(',') 			
-				fr = [float(item) for item in r]
-				cfg["R"] = fr 
-				DisplayCfg()
-				print('Cal set to: ',fr)
-			except: pass
-
-		if msg[0:12]=='set_scales=(':
-			try: 
-				r = msg[12:-1].split(',') 			
-				fr = [float(item) for item in r]
-				cfg["VScale"] = fr[0:2]
-				cfg["IScale"] = fr[2:]
-				DisplayCfg()
-				print('scales set: ', r)
-				RedrawGraph()
-			except: pass
-
-		if msg=='save_cfg': 				
+				ads.setVoltageRange_mV(ADS1115_RNG[r])
+				print('Range set to ix',r)
+		elif msg[0:9]=='set_mode=':
+			r = int(msg[9:]) 				
+			cfg["Mode"] = r
+			DisplayCfg()
+			print('Mode set to ix', r)
+		elif msg[0:9]=='set_cal=(':
+			r = msg[9:-1].split(',') 			
+			fr = [float(item) for item in r]
+			cfg["R"] = fr 
+			DisplayCfg()
+			print('Cal set to: ',fr)
+		elif msg[0:12]=='set_scales=(':
+			r = msg[12:-1].split(',') 			
+			fr = [float(item) for item in r]
+			cfg["VScale"] = fr[0:2]
+			cfg["IScale"] = fr[2:]
+			DisplayCfg()
+			print('scales set: ', r)
+			RedrawGraph()
+		elif msg=='save_cfg': 				
 			print('saved config')
 			SaveCfg()
+		elif msg=='restart':
+			Restart()
+		elif msg[0:12]=='set_totals=(':
+			r = msg[12:-1].split(',')
+			fr = [float(item) for item in r]
+			Restart()
+			state["Ah"] = fr[0]
+			state["Wh"] = fr[1]
+	except:
+		ShowError(['Parse Err:','msg=',msg[0:12]])
 	return msg
 
 def ShowError(ErrMsg = 'Error'):
@@ -260,6 +285,12 @@ def DisplayCfg():
 	Display(1, 220, f'Mode:{MName[cfg["Mode"]]}', fg=GREY, sc=1)
 	Display(-1, 220, f'Range:{RNGV[cfg['Range']]}', fg=GREY, sc=1)
 
+def Restart():
+	state["Ah"] = 0
+	state["Wh"] = 0
+	InitGraph()
+	RedrawGraph()	
+
 @micropython.native
 def Cumulate(vals, dt):
 	vrix = 1 if cfg["Mode"] == 2 else 0  # R1 or RP: ix = 0, RS: ix = 1
@@ -274,6 +305,7 @@ def Cumulate(vals, dt):
 	state["Wh"] += max(0,v * i * dt)
 	GraphAddPt(v, i)
 
+#@micropython.native
 def ExecBtnPress(Keys):
 	#tft.fill_rect(100, 100, 200, 30, st7789.BLACK)
 	#Display(100,120,f'{Keys:04b}')
@@ -287,7 +319,7 @@ def ExecBtnPress(Keys):
 		DisplayCfg()
 		ads.setVoltageRange_mV(ADS1115_RNG[cfg["Range"]])
 
-	if Keys == 1 or Keys == 4:
+	if Keys == 1 or Keys == 4: # blue or green
 		d = 1 if Keys == 1 else -1
 		old = cfg["Mode"] 
 		cfg["Mode"] += d
@@ -295,15 +327,25 @@ def ExecBtnPress(Keys):
 		if cfg["Mode"]<0: cfg["Mode"] = 2
 		if old != cfg["Mode"] : print(f'>Mode:{cfg["Mode"]}')
 		DisplayCfg()
-	if Keys == 3:
+	if Keys == 3: # blue and red
 		SaveCfg()
-	if Keys == 5:
-		state["Ah"] = 0
-		state["Wh"] = 0
-		InitGraph()
+	if Keys == 5: # blue and green
+		Restart()
+	if Keys == 10: # red + yellow	(toggle-autoscale)
+		cfg["AutoScale"] = 1 - cfg["AutoScale"]
+		if (Graph["Xix"] > 0) and cfg["AutoScale"]: 
+			for g in ["V","I"]:
+				max = -9999; min = 9999
+				data = Graph[g + "arr"]
+				for ix in range(0, Graph["Xix"] - 1):
+					if data[ix] > max: max = data[ix]
+					if data[ix] < min: min = data[ix]
+				
+				cfg[g + "Scale"][0] = min * 0.8
+				cfg[g + "Scale"][1] = max * 1.2
 		RedrawGraph()
-	if Keys == 10:
-		ShowError(['Trois lignes','message','assez long'])
+
+# ShowError(['Trois lignes','message','assez long'])
 
 def CheckKeys():	
 	Keys = btns.key1.value() + (btns.key2.value() << 1) + (btns.key3.value() << 2) + (btns.key4.value() << 3)
@@ -317,6 +359,7 @@ def CheckKeys():
 				tft.fill(st7789.BLACK)
 				DisplayTop()
 				DisplayCfg()
+				RedrawGraph()
 			return  # wait for keypressed
 		if Keys > 0 and err == 1: state["Error"] = 2
 		return
