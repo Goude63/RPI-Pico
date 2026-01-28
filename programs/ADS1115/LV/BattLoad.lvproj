@@ -35,6 +35,7 @@
 		<Item Name="SetMode.vi" Type="VI" URL="../SetMode.vi"/>
 		<Item Name="ChkSync.vi" Type="VI" URL="../ChkSync.vi"/>
 		<Item Name="SetScales.vi" Type="VI" URL="../SetScales.vi"/>
+		<Item Name="RestartPico.vi" Type="VI" URL="../RestartPico.vi"/>
 		<Item Name="Dependencies" Type="Dependencies"/>
 		<Item Name="Build Specifications" Type="Build">
 			<Item Name="BattCapacity" Type="EXE">
@@ -54,7 +55,7 @@
 				<Property Name="Bld_localDestDirType" Type="Str">relativeToCommon</Property>
 				<Property Name="Bld_modifyLibraryFile" Type="Bool">true</Property>
 				<Property Name="Bld_previewCacheID" Type="Str">{4BBA27A7-1546-4E03-A868-DC025C690DB8}</Property>
-				<Property Name="Bld_version.build" Type="Int">16</Property>
+				<Property Name="Bld_version.build" Type="Int">18</Property>
 				<Property Name="Bld_version.major" Type="Int">1</Property>
 				<Property Name="Destination[0].destName" Type="Str">BattCapacity.exe</Property>
 				<Property Name="Destination[0].path" Type="Path">../builds/NI_AB_PROJECTNAME/BattCapacity.exe</Property>
