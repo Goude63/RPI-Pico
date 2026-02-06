@@ -37,6 +37,10 @@ ADS1115_250_SPS = 0x00A0
 ADS1115_475_SPS = 0x00C0
 ADS1115_860_SPS = 0x00E0
 
+ADS115_SPS = (ADS1115_8_SPS, ADS1115_16_SPS, ADS1115_32_SPS, ADS1115_64_SPS, 
+    ADS1115_128_SPS, ADS1115_250_SPS, ADS1115_475_SPS, ADS1115_860_SPS)
+ADS115_SPSS = (8, 16, 32, 64, 128, 250, 475, 860)
+
 ADS1115_RANGE_6144  = 0x0000
 ADS1115_RANGE_4096  = 0x0200
 ADS1115_RANGE_2048  = 0x0400
@@ -226,6 +230,7 @@ class ADS1115(object):
     def getResult_V(self):
         return self.getResult_mV()/1000
 
+    @micropython.native
     def readMulti(self, ChList):
         result = [] 
         for ChN in ChList:

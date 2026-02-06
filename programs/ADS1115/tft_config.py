@@ -7,7 +7,6 @@ import st7789
 
 TFA = 0	 # top free area when scrolling
 BFA = 0	 # bottom free area when scrolling
-MAXX = 284
 
 def config(rotation=0, buffer_size=0, options=0):
     return st7789.ST7789(
