@@ -1,10 +1,7 @@
 import uctypes, array, time, math, rp2
-from machine import mem32, mem16
+from machine import mem32, mem16, ADC, Pin
 from dma import Dma
 from utils import *
-
-import micropython
-micropython.alloc_emergency_exception_buf(100)
 
 # Receives adc values from dma1 in 4 bytes format, 
 # outputs 2 bytes to dma2 that send to 16 bits buffer
@@ -71,6 +68,13 @@ class Adc:
 			else: raise(Exception('Invalid ADC channel'))
 			self.chs = [chs]
 
+		# force pin in analog mode (except temp sensor)
+		for c in self.chs:
+			if c<4:
+				x = ADC(Pin(c+26))
+				x.read_u16() 
+				x = None
+
 		# enable adc and, if needed, temperature sensor
 		cs = 1
 		if self.ch_mask & 0x10: cs |= 2  # if ch4: enable temperature sensor 
@@ -121,8 +125,10 @@ class Adc:
 		self.file = file
 
 		bs = self.buf_size
-		bs_bits = math.log2(bs*4) # 2 buffers, 2 bytes per sample		
-		if str(bs_bits)[-2:]!='.0': raise(Exception('"Buffer Size" must be a power of 2'))
+		bs_bits = round(math.log2(bs*4),4)  # 2 buffers, 2 bytes per sample		
+		if str(bs_bits)[-2:]!='.0': 
+			# print(bs_bits, str(bs_bits)[-2:])
+			raise(Exception('"Buffer Size" must be a power of 2'))
 		if pio_sm > 3: raise(Exception('"pio_sm" must be <= 3'))
 
 		PIOTX = 0x50200010 + 4 * pio_sm
@@ -237,9 +243,9 @@ class Adc:
 		if (title): print(title)
 		cs = mem32[Adc.CS]
 		print('ADC:')
-		print('EN:', cs & 1, '  TS:', field(cs,1,1), '  ONCE:', field(cs,2,1), \
+		print('EN:', cs & 1, '  TS:', field(cs,1,1), '  ONCE:', field(cs,2,1), 
 			'  MANY:', field(cs,3,1), '  READY:', field(cs,8,1))
-		print('AINSEL:', field(cs,12,3), '  RROBIN:', bin(field(cs,16,5))[2:], \
+		print('AINSEL:', field(cs,12,3), '  RROBIN:', bin(field(cs,16,5))[2:], 
 			'  DIV:', mem32[Adc.DIV] / 256)
 		self.dma_adc.Info('\nADC to PIO')
 		self.dma_ram.Info('PIO to RAM')
@@ -256,35 +262,74 @@ class Adc:
 				print(hex(self.sm.get()), end = ' ')
 
 # Test it.
-'''
-# test non Dma acquisition
-adc = Adc(chs=4,fs = 2) # test with ch4: temp sensor
-print('n=',adc.n, ' mask=', bin(adc.ch_mask), ' chs=', adc.chs)
-while True:
-	print(adc.Read(5), end=' T=')
-	print(27-(3.3*adc.buf[0]/4096 - 0.706)/.001721)
-	time.sleep_ms(200)
-'''
+if __name__ == "__main__":
+	'''
+	# test non Dma acquisition, reading ch 0 and temp
+	adc = Adc(chs=[3,4],fs = 2) # test with ch4: temp sensor
+	print('n=',adc.n, ' mask=', bin(adc.ch_mask), ' chs=', adc.chs)
+	while True:
+		SMPL = 6
+		adc.Read(SMPL)  # reads in adc.buf
 
-'''
-# to switch off SD Card test, comment import and SDCard.xx() lines
-# test dma interface 
-def tst():
-	print('\33c') # clear screen
-	machine.freq(260000000)
-	from sdcard import SDCard
+		# average even and odds values
+		ch0t = 0; ch4t = 0
+		for ix, v in enumerate(adc.buf):
+			if (ix & 1) == 0: ch0t += v
+			else: ch4t += v
 
-	SDCard.Mount()
-	adc = Adc(chs=0, fs = 22000, buf_size=2048)
+		print(f'ch0t={ch0t}, ch4t={ch4t}, arr={adc.buf}')
+		print(f'ch0: {ch0t/SMPL}, t={27-(3.3*ch4t/SMPL/4096 - 0.706)/.001721}')
+		
+		time.sleep_ms(200)
+	'''
 
-	f = open("/sd/test.bin", "w")  # change to '/sd/test.bin' for sd card
-	adc.WriteFileHdr(f)
-	adc.Start(file=f)
-	print('Starting acquisition 5 sec...')
-	time.sleep(5)
-	adc.Stop()
-	f.close()
-	SDCard.UMount()
-	print('Done')
-tst()
-'''
+	'''
+	# to switch off SD Card test, comment import and SDCard.xx() lines
+	# test dma interface 
+	def tst():
+		print('\33c') # clear screen
+		machine.freq(260000000)
+		#from sdcard import SDCard
+
+		#SDCard.Mount()
+		adc = Adc(chs=0, fs = 22000, buf_size=2048)
+
+		f = open("/test.bin", "w")  # change to '/sd/test.bin' for sd card
+		adc.WriteFileHdr(f)
+		adc.Start(file=f)
+		print('Starting acquisition 5 sec...')
+		time.sleep(5)
+		adc.Stop()
+		f.close()
+		#SDCard.UMount()
+		print('Done')
+	tst()
+	'''
+
+	#'''
+	# Demo with DMA and callback
+	# 
+	new_data = False
+	def Process(mv):
+		global new_data
+		new_data = mv
+
+	def tst():
+		global new_data
+		print('\33c') # clear screen
+
+		print('Starting acquisition 10 sec...')
+		adc = Adc(chs=0, fs = 1024, buf_size=1024)
+		adc.Start(CB = Process)
+		n=0
+		while n<50:
+			n += 1
+			time.sleep_ms(200)
+			if new_data:
+				print(bytes(new_data[0:10]))				
+				new_data = False
+			
+		adc.Stop()
+		print('Done')
+	tst()
+	#'''

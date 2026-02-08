@@ -16,3 +16,7 @@ def exists(fn):
 		return True
 	except OSError:
 		return False
+
+def file_size(fn):
+	return os.stat(fn)[6]
+

@@ -31,16 +31,17 @@ class LED(object):
             self.pwm.duty_u16(0)
             #self.led.value(0)
     
-'''
-#tst it 
-import time
-led = LED()
-r,g,b = (0,0,0)
-while True:
-    led.on(r,g,b)
-    r += 16
-    if r>255: r=0; g += 16
-    if g>255: g=0; b += 16
-    if b>255: b = 0
-    time.sleep_ms(20)
-'''
+# test module
+if __name__ == "__main__":
+    import time
+    led = LED()
+    INC = 4
+    MAX = 31
+    r,g,b = (0,0,0)
+    while True:
+        led.on(r,g,b)
+        r += INC
+        if r>MAX: r=0; g += INC
+        if g>MAX: g=0; b += INC
+        if b>MAX: b = 0
+        time.sleep_ms(1)
