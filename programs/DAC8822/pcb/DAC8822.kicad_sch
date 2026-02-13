@@ -5563,18 +5563,6 @@
 		(uuid "04f1b63a-6510-4c7d-9fc9-e3fc105b8f30")
 	)
 	(junction
-		(at 142.24 182.88)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "0af3f1c6-9ad4-46eb-b77d-9af7bdde1c39")
-	)
-	(junction
-		(at 142.24 175.26)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "0b7c3eb7-7939-428b-b62e-81cfc42ddbb6")
-	)
-	(junction
 		(at 60.96 35.56)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -5663,6 +5651,12 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "6898fe28-f600-44fd-a543-b6ec973dd920")
+	)
+	(junction
+		(at 142.24 175.26)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "78ec069c-52fe-44aa-abea-67edfb8426b4")
 	)
 	(junction
 		(at 88.9 176.53)
@@ -5783,6 +5777,12 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "e0ea6341-2bbf-419b-8e05-1c9e158a6c3b")
+	)
+	(junction
+		(at 142.24 182.88)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "e16253dc-a971-4278-b62b-11a04f11fec2")
 	)
 	(junction
 		(at 59.69 115.57)
@@ -7217,16 +7217,6 @@
 	)
 	(wire
 		(pts
-			(xy 142.24 175.26) (xy 148.59 175.26)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "4b93db0c-e42f-49bb-b092-10f88fe3478a")
-	)
-	(wire
-		(pts
 			(xy 110.49 176.53) (xy 113.03 176.53)
 		)
 		(stroke
@@ -8084,6 +8074,16 @@
 			(type default)
 		)
 		(uuid "9c06d127-9d69-49c5-b750-f17b8a6b8f90")
+	)
+	(wire
+		(pts
+			(xy 142.24 175.26) (xy 148.59 175.26)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "9cd26266-6c13-4a2c-8567-ab12dc4a0fd7")
 	)
 	(wire
 		(pts
@@ -10094,7 +10094,7 @@
 				(hide yes)
 			)
 		)
-		(property "Footprint" "Connector_PinHeader_1.00mm:PinHeader_1x04_P1.00mm_Vertical"
+		(property "Footprint" "Connector_PinHeader_1.27mm:PinHeader_1x04_P1.27mm_Vertical"
 			(at 222.25 67.31 0)
 			(effects
 				(font
@@ -10950,7 +10950,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 219.202 96.012 0)
+			(at 214.122 95.504 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -12724,7 +12724,7 @@
 				(hide yes)
 			)
 		)
-		(property "Footprint" "Connector_PinHeader_1.00mm:PinHeader_1x04_P1.00mm_Vertical"
+		(property "Footprint" "Connector_PinHeader_1.27mm:PinHeader_1x04_P1.27mm_Vertical"
 			(at 45.72 49.53 0)
 			(effects
 				(font
@@ -13082,7 +13082,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 142.24 179.07 0)
+		(at 142.24 179.07 180)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -13090,7 +13090,7 @@
 		(dnp no)
 		(uuid "95a08fd5-70e4-44f7-a62a-4c0c4d2856ba")
 		(property "Reference" "R2"
-			(at 144.018 178.054 0)
+			(at 140.462 180.086 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13099,7 +13099,7 @@
 			)
 		)
 		(property "Value" "3k"
-			(at 144.018 180.594 0)
+			(at 140.462 177.546 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13108,7 +13108,7 @@
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0805_2012Metric"
-			(at 140.462 179.07 90)
+			(at 144.018 179.07 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13687,7 +13687,6 @@
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
-		(fields_autoplaced yes)
 		(uuid "b51ea427-1d32-4be4-888b-47a679734ec1")
 		(property "Reference" "#PWR040"
 			(at 217.17 88.9 0)
@@ -13699,7 +13698,7 @@
 			)
 		)
 		(property "Value" "+3.3V"
-			(at 217.17 80.01 0)
+			(at 215.138 81.788 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -15352,7 +15351,7 @@
 				(hide yes)
 			)
 		)
-		(property "Footprint" "Connector_PinHeader_1.00mm:PinHeader_1x04_P1.00mm_Vertical"
+		(property "Footprint" "Connector_PinHeader_1.27mm:PinHeader_1x04_P1.27mm_Vertical"
 			(at 45.72 113.03 0)
 			(effects
 				(font
@@ -15515,7 +15514,7 @@
 				(hide yes)
 			)
 		)
-		(property "Footprint" "Connector_PinHeader_1.00mm:PinHeader_1x04_P1.00mm_Vertical"
+		(property "Footprint" "Connector_PinHeader_1.27mm:PinHeader_1x04_P1.27mm_Vertical"
 			(at 222.25 87.63 0)
 			(effects
 				(font
