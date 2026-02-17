@@ -1,3 +1,4 @@
+machine.freq(160_000_000)
 from ADS1115 import *
 from usbcom import USBCOM
 from machine import Pin, ADC
@@ -5,9 +6,9 @@ import time,json
 import st7789, tft_config
 import tft_buttons as Buttons
 import romancs as font
-import array
+import array, json, gc
 
-VERSION = "1.0"
+VERSION = "1.12"
 FIX_X  = -20
 FIX_Y  = 0
 MAXX   = 320   # must be even
@@ -19,6 +20,7 @@ ORANGE = st7789.color565(255,191,191)
 BLUE   = st7789.color565(127,127,255)
 AUTOSC = st7789.color565(128,32,32)
 GREEN  = st7789.color565(127,255,127)
+DGREEN = st7789.color565(0,128,0)
 GREY   = st7789.color565(191,191,191)
 BLACK  = st7789.BLACK
 
@@ -36,7 +38,8 @@ btns = Buttons.Buttons()
 cfg   = {"Mode" : 0,	"R":[0.21627314239740, 0.10751858502626, 0.43486739695072], "Range":5,
 		  "AutoScale":1, "VScale":[3.0, 3.7], "IScale": [4.0, 15.0] }
 
-state = {"V" : 0 ,"A" : 0, "Ah" : 0, "Wh" : 0, "T":0, "Error": 0, "Pause": 0, "ErrMsg":[]}
+state = {"V" : 0 ,"A" : 0, "Ah" : 0, "Wh" : 0, "T":0}
+display = {"Error": 0, "Pause": 0, "Splash": 0, "ErrMsg":[]}
 
 Graph = {"Varr": array.array('f',[0] * MAXX), "Iarr": array.array('f',[0] * MAXX), 
 	 "Xix" : 0, "PtPerPix": 1, "n": 0 , "y0":80, "h":100}
@@ -79,7 +82,7 @@ def RedrawGraph():
 		DrawGraphPixel(ix, "I", BLUE)
 	
 	# re-show error message if graph is redrawn (in case there is an error pending)
-	if state["Error"]: ShowError(state["ErrMsg"])
+	if display["Error"]: ShowError(display["ErrMsg"])
 
 def AutoScale(g, v):
 	if cfg["AutoScale"] == 0: return # autoscale off
@@ -181,39 +184,51 @@ def ProcessMessages():
 			state["Wh"] = fr[1]
 			DisplayTop()
 		elif msg[0:8]=='upload=(': # receive 
-			if not state["Pause"]:
-				state["Pause"] = 1
-				ShowError("Pause")
+			if not display["Pause"]:
+				ShowPause()
 				InitGraph()
 			r = msg[8:-1].split(',')
 			fr = [float(item) for item in r]
 			for ix in range(0,len(fr), 2): 
 				GraphAddPt(fr[ix], fr[ix+1])
 			RedrawGraph()
-			print(">>ok<<")
+			# handshake for graph part
+			print(">>ok<<") 
 		elif msg[0:8]=='unpause(':  # value is PtPerPix
 			Graph["PtPerPix"] = int(msg[8:-1])
-			if state["Pause"]:
-				state["Pause"] = 0
-				state["Error"] = 0
+			if display["Pause"]:
+				display["Pause"] = 0
+				display["Error"] = 0
 				RedrawGraph()
 	except:
 		ShowError(['Parse Err:','msg=',msg[0:12]])
 	return msg
 
-def ShowError(ErrMsg = 'Error', color=RED):
-	state["Error"] = 1
+def ShowPause(Msg = 'Pause', color=GREY):
+	display["Pause"] = 1
+	ShowError(Msg, color=color)
 
+# Splash = short message to give action feedback
+def ShowSplash(Msg, color=DGREEN, time_ms = 1500):
+	display["Splash"] = time.ticks_ms() + time_ms
+	ShowMsg(Msg, color)
+
+def ShowError(ErrMsg = 'Error', color=RED):
+	display["Error"] = 1
 	if isinstance(ErrMsg, str): ErrMsg = [ErrMsg]
-	state["ErrMsg"] = ErrMsg
+	display["ErrMsg"] = ErrMsg
+	ShowMsg(ErrMsg, color)
+
+def ShowMsg(Msg, color):
+	if isinstance(Msg, str): Msg = [Msg]
 	w = 0
-	for s in ErrMsg: w = max(w,tft.draw_len(font, s))
+	for s in Msg: w = max(w,tft.draw_len(font, s))
 	h = round(font.HEIGHT * 1.2)
-	y = (tft.height() - h * len(ErrMsg)) // 2
+	y = (tft.height() - h * len(Msg)) // 2
 	x = (MAXX - w) // 2 
-	tft.fill_rect(x - 5, y - 2 , w + 10, h * len(ErrMsg) + 4, color)
+	tft.fill_rect(x - 5, y - 2 , w + 10, h * len(Msg) + 4, color)
 	y += 12
-	for s in ErrMsg: 
+	for s in Msg:
 		tft.draw(font, s, x, y, st7789.WHITE)
 		y += h
 
@@ -221,6 +236,7 @@ def SaveCfg():
 	try:
 		with open("config.json", "w") as f:
 			json.dump(cfg, f)
+		ShowSplash("Config Saved")		
 	except:
 		ShowError(['Error while','writing:','"config.json"'])
 
@@ -228,7 +244,7 @@ def LoadCfg():
 	global cfg
 	try:
 		with open("config.json", "r") as f:
-			cfg = json.load(f)		
+			cfg = json.load(f)
 	except:
 		pass  # if no config file, use defaults
 
@@ -266,14 +282,18 @@ def Display(x, y, text, fg = st7789.WHITE, bg = st7789.BLACK,  sc = 1.3):
 	h = round(font.HEIGHT * sc)
 	tft.draw(font, text, x, y, fg, sc )
 
+@micropython.native
 def DisplayTop():
-	if state["Error"] and not state["Pause"]: return
+	if display["Error"] and not display["Pause"]: return
+	if display["Splash"] and time.ticks_diff(time.ticks_ms(), display["Splash"]) > 0:
+		display["Splash"] = 0
+		RedrawGraph()
 
 	h = int(round(font.HEIGHT * 1.3))
 	y = 2
 
-	tft.fill_rect(MAXX//2+35, y+6, MAXX//2-35, h-4, st7789.BLACK)
-	#tft.rect(MAXX//2+35, y+6, MAXX//2-35, h-4, st7789.WHITE)
+	tft.fill_rect(MAXX//2+33, y+6, MAXX//2-33, h-4, st7789.BLACK)
+	#tft.rect(MAXX//2+33, y+6, MAXX//2-33, h-4, st7789.WHITE)
 	Display(-13, y+20, f'{state["V"]:.3f}V', fg=RED)
 
 	tft.fill_rect(0, y+6, MAXX//2-40, h-4, st7789.BLACK)
@@ -300,11 +320,12 @@ def DisplayTop():
 	w =  tft.draw_len(font, fv, 1.2)
 	x0 = (MAXX-w)//2
 	tft.fill_rect(MAXX//2-36, y+2, 68, 28, st7789.BLACK)
+	# tft.rect(MAXX//2-36, y+2, 68, 28, st7789.WHITE)
 	Display(x0, y+20, fv, fg=st7789.YELLOW, sc = 1.2)
 	tft.circle(x0+w-11, y+6, 3, st7789.YELLOW)
 
 def DisplayCfg():
-	if state["Error"]: return
+	if display["Error"]: return
 	tft.fill_rect(0, 210, MAXX, font.HEIGHT, st7789.BLACK)
 	Display(1, 220, f'Mode:{MName[cfg["Mode"]]}', fg=GREY, sc=1)
 	Display(-1, 220, f'Range:{RNGV[cfg['Range']]}', fg=GREY, sc=1)
@@ -312,8 +333,8 @@ def DisplayCfg():
 def Restart():
 	state["Ah"] = 0
 	state["Wh"] = 0
-	state["Pause"] = 0
-	state["Error"] = 0
+	display["Pause"] = 0
+	display["Error"] = 0
 	InitGraph()
 	RedrawGraph()	
 
@@ -331,12 +352,17 @@ def Cumulate(vals, dt):
 	state["Wh"] += max(0,v * i * dt)
 	GraphAddPt(v, i)
 
-#@micropython.native
+@micropython.native  # when debug done, set in native please
 def ExecBtnPress(Keys):
 	#tft.fill_rect(100, 100, 200, 30, st7789.BLACK)
 	#Display(100,120,f'{Keys:04b}')
-	if Keys == 2 or Keys == 8:
-		d = 1 if Keys == 2 else -1
+	BLUE_BTN   = 1
+	RED_BTN    = 2
+	GREEN_BTN  = 4
+	YELLOW_BTN = 8 
+
+	if Keys == RED_BTN or Keys == YELLOW_BTN:
+		d = 1 if Keys == RED_BTN else -1
 		old = cfg["Range"]
 		cfg["Range"] += d
 		if cfg["Range"]>5: cfg["Range"] = 5 
@@ -345,51 +371,88 @@ def ExecBtnPress(Keys):
 		DisplayCfg()
 		ads.setVoltageRange_mV(ADS1115_RNG[cfg["Range"]])
 
-	if Keys == 1 or Keys == 4: # blue or green
-		d = 1 if Keys == 1 else -1
+	elif Keys == BLUE_BTN: 
 		old = cfg["Mode"] 
-		cfg["Mode"] += d
+		cfg["Mode"] += 1
 		if cfg["Mode"]>2: cfg["Mode"] = 0 
 		if cfg["Mode"]<0: cfg["Mode"] = 2
 		if old != cfg["Mode"] : print(f'>Mode:{cfg["Mode"]}')
 		DisplayCfg()
-	if Keys == 3: # blue and red
+	elif Keys == GREEN_BTN + YELLOW_BTN: 
 		SaveCfg()
-	if Keys == 5: # blue and green
+	elif Keys == BLUE_BTN + GREEN_BTN: # 5 blue and green
 		Restart()
-	if Keys == 10: # red + yellow	(toggle-autoscale)
+	elif Keys == RED_BTN + YELLOW_BTN: # 10 red + yellow	(toggle-autoscale)
 		cfg["AutoScale"] = 1 - cfg["AutoScale"]
 		if (Graph["Xix"] > 0) and cfg["AutoScale"]: 
-			for g in ["V","I"]:
-				max = -9999; min = 9999
-				data = Graph[g + "arr"]
-				for ix in range(0, Graph["Xix"] - 1):
-					if data[ix] > max: max = data[ix]
-					if data[ix] < min: min = data[ix]
-				mid = (max + min) / 2
-				ds = (max - min) * 1.2
-				cfg[g + "Scale"][0] = mid - ds
-				cfg[g + "Scale"][1] = mid + ds
+			ReScale()
+		else:
+			RedrawGraph()
+	elif Keys == BLUE_BTN + RED_BTN:
+		SaveState()
+	elif Keys == BLUE_BTN + YELLOW_BTN:
+		RestoreState()
+
+def ReScale():
+	for g in ["V","I"]:
+		max = -9999; min = 9999
+		data = Graph[g + "arr"]
+		for ix in range(0, Graph["Xix"] - 1):
+			if data[ix] > max: max = data[ix]
+			if data[ix] < min: min = data[ix]
+		mid = (max + min) / 2
+		ds = (max - min) * 1.2
+		cfg[g + "Scale"][0] = mid - ds
+		cfg[g + "Scale"][1] = mid + ds
 		RedrawGraph()
 
-# ShowError(['Trois lignes','message','assez long'])
+def SaveState():
+	try:
+		with open("state.json", "w") as f:
+			json.dump({"Graph":Graph, "state":state}, f)
+		ShowSplash("State Saved")
+	except:
+		ShowError(['Error while','writing:','"state.json"'])	
 
+def RestoreState():
+	global Graph, state
+	try:
+	#if 1==1:
+		with open("state.json", "r") as f:
+			s = f.read()		
+		s = s.replace("array('f', [","[")
+		s = s.replace("]),","],")
+		#print(s)
+
+		js = json.loads(s)
+		#print(js)
+		Graph = js["Graph"]
+		Graph["Varr"] = array.array('f',Graph["Varr"])
+		Graph["Iarr"] = array.array('f',Graph["Iarr"])
+		gc.collect()
+		state = js["state"]
+		ReScale()
+		ShowPause()
+	except:
+		Restart() # no saved file, clear graph
+
+@micropython.native
 def CheckKeys():	
 	Keys = btns.key1.value() + (btns.key2.value() << 1) + (btns.key3.value() << 2) + (btns.key4.value() << 3)
 	Keys ^= 0xF
 
-	err = state["Error"]  # 0 no errr, 1: wait any button pressed, 2: wait release
+	err = display["Error"]  # 0 no errr, 1: wait any button pressed, 2: wait release
 	if err:
 		if Keys == 0:
 			if err == 2: # any button was pressed and released. hide error
-				state["Error"] = 0  
-				state["Pause"] = 0
+				display["Error"] = 0  
+				display["Pause"] = 0
 				tft.fill(st7789.BLACK)
 				DisplayTop()
 				DisplayCfg()
 				RedrawGraph()
 			return  # wait for keypressed
-		if Keys > 0 and err == 1: state["Error"] = 2
+		if Keys > 0 and err == 1: display["Error"] = 2 # request wait for release
 		return
 
 	# actions are on release to allow multi button press
@@ -406,23 +469,22 @@ def CheckKeys():
 
 import math 
 
-# @micropython.native # comment when debugging to get error line numbers
+@micropython.native # comment when debugging to get error line numbers
 def main():
 	tft.init()
 	tft.fill(st7789.BLACK)
 
 	ShowError(f"Version: {VERSION}",  st7789.color565(32,32,32))
 	time.sleep(2)
-	state["Error"] = 0
+	display["Error"] = 0
 
 	LoadCfg()
 	DisplayCfg()
 	RedrawGraph()
 
 	Avg_Cnt = 64
-	delay = 2000000 # us
+	delay = 2_000_000 # 2_000_000 # us
 
-	machine.freq(250000000)
 	ads.setAvgCNt(Avg_Cnt)
 	ads.setVoltageRange_mV(ADS1115_RNG[cfg["Range"]])
 	ads.setConvRate(ADS1115_250_SPS)
@@ -444,7 +506,7 @@ def main():
 
 		rt = round(ReadTemp(),1) # resistance temperature
 		vals = ads.readMulti(Chnls) 
-		if not state["Pause"]: 
+		if not display["Pause"]: 
 			print("acq=", end="")
 			print(vals + (rt,))
 			Cumulate(vals, dt)	
