@@ -8,7 +8,7 @@ import tft_buttons as Buttons
 import romancs as font
 import array, json, gc
 
-VERSION = "1.12"
+VERSION = "1.33"
 FIX_X  = -20
 FIX_Y  = 0
 MAXX   = 320   # must be even
@@ -26,20 +26,24 @@ BLACK  = st7789.BLACK
 
 RNGV = (0.256, 0.512, 1.024, 2.048, 4.096, 6.144)
 MName = ['R1','Parallel', 'Serial']
-KeyTrack = {"Last":-1, "n":0, "Max":0}
+KeyTrack = {"Last":-1, "n":0, "Max":0, "Long":False}
+FanMsgCnt = 0
 
 # module level "globals"
-usb = USBCOM()
-ads = ADS1115(i2c_id = 1, sda=Pin(18), scl=Pin(19))
-adc = ADC(27)
-tft = tft_config.config(3)
-btns = Buttons.Buttons()
+usb   = USBCOM()
+ads   = ADS1115(i2c_id = 1, sda=Pin(18), scl=Pin(19))
+adc   = ADC(27)
+relay = Pin(5,Pin.OUT,value=0)
+tft   = tft_config.config(3)
+btns  = Buttons.Buttons()
+SMODES  = ("LiPo","LiFePo4")
+SLIMITS = ([0.3, 3.2, 4.2], [0.5, 3.0, 3.6]) # auto off limits (work A, minv, maxv)
 
-cfg   = {"Mode" : 0,	"R":[0.21627314239740, 0.10751858502626, 0.43486739695072], "Range":5,
+cfg   = {"Mode" : 0,	"R":[0.197684, 0.111008, 0.396938], "Range":5, "SMode":0,
 		  "AutoScale":1, "VScale":[3.0, 3.7], "IScale": [4.0, 15.0] }
 
 state = {"V" : 0 ,"A" : 0, "Ah" : 0, "Wh" : 0, "T":0}
-display = {"Error": 0, "Pause": 0, "Splash": 0, "ErrMsg":[]}
+display = {"Error": 0, "Pause": 0, "Splash": 0, "RelayDelay": 0, "ErrMsg":[]}
 
 Graph = {"Varr": array.array('f',[0] * MAXX), "Iarr": array.array('f',[0] * MAXX), 
 	 "Xix" : 0, "PtPerPix": 1, "n": 0 , "y0":80, "h":100}
@@ -176,7 +180,7 @@ def ProcessMessages():
 			print('saved config')
 			SaveCfg()
 		elif msg=='restart':
-			Restart()
+			Restart(True)
 		elif msg[0:12]=='set_totals=(':
 			r = msg[12:-1].split(',')
 			fr = [float(item) for item in r]
@@ -200,9 +204,24 @@ def ProcessMessages():
 				display["Pause"] = 0
 				display["Error"] = 0
 				RedrawGraph()
+		elif msg[0:9]=='get_file(':
+			fn = msg[9:-1]
+			SendFile(fn)
 	except:
 		ShowError(['Parse Err:','msg=',msg[0:12]])
 	return msg
+
+def SendFile(fn):
+	try:
+		print("\1",end="")
+		#print('Bob')
+		with open(fn, 'r') as file:
+			for line in file: print(line, end='')
+		print() # force at least 1 linefeed
+	except:		
+		pass
+	print('\1') # on error: empty file returned
+	if fn=="state.json": RestoreState()
 
 def ShowPause(Msg = 'Pause', color=GREY):
 	display["Pause"] = 1
@@ -224,7 +243,7 @@ def ShowMsg(Msg, color):
 	w = 0
 	for s in Msg: w = max(w,tft.draw_len(font, s))
 	h = round(font.HEIGHT * 1.2)
-	y = (tft.height() - h * len(Msg)) // 2
+	y = 10 + (tft.height() - h * len(Msg)) // 2
 	x = (MAXX - w) // 2 
 	tft.fill_rect(x - 5, y - 2 , w + 10, h * len(Msg) + 4, color)
 	y += 12
@@ -236,7 +255,6 @@ def SaveCfg():
 	try:
 		with open("config.json", "w") as f:
 			json.dump(cfg, f)
-		ShowSplash("Config Saved")		
 	except:
 		ShowError(['Error while','writing:','"config.json"'])
 
@@ -284,6 +302,7 @@ def Display(x, y, text, fg = st7789.WHITE, bg = st7789.BLACK,  sc = 1.3):
 
 @micropython.native
 def DisplayTop():
+	global FanMsgCnt
 	if display["Error"] and not display["Pause"]: return
 	if display["Splash"] and time.ticks_diff(time.ticks_ms(), display["Splash"]) > 0:
 		display["Splash"] = 0
@@ -316,7 +335,13 @@ def DisplayTop():
 	y = 16
 	v = state["T"]
 	fv =f'{v:.1f} '
-	if v<0: fv = '--'
+	if v<0: 
+		fv = '--'
+		if FanMsgCnt < 5:
+			ShowSplash(["Turn on Fan!","(POWER button)"],color=st7789.MAGENTA)
+			FanMsgCnt += 1
+	else: FanMsgCnt = 0
+
 	w =  tft.draw_len(font, fv, 1.2)
 	x0 = (MAXX-w)//2
 	tft.fill_rect(MAXX//2-36, y+2, 68, 28, st7789.BLACK)
@@ -330,13 +355,29 @@ def DisplayCfg():
 	Display(1, 220, f'Mode:{MName[cfg["Mode"]]}', fg=GREY, sc=1)
 	Display(-1, 220, f'Range:{RNGV[cfg['Range']]}', fg=GREY, sc=1)
 
-def Restart():
-	state["Ah"] = 0
-	state["Wh"] = 0
+def Restart(rst = False):
+	if rst:
+		state["Ah"] = 0
+		state["Wh"] = 0
 	display["Pause"] = 0
 	display["Error"] = 0
 	InitGraph()
 	RedrawGraph()	
+
+def Disconnect():
+	# do not disconnect near a relay state change
+	if display["RelayDelay"]>0: 
+		if time.ticks_diff(display["RelayDelay"], time.ticks_ms())<0:
+			return
+		else:
+			display["RelayDelay"] = 0
+	if cfg["SMode"] < 2: return
+
+	lim = SLIMITS[cfg["SMode"]]
+	if (state["A"] > lim[0]) and not (lim[1] <= state["V"] <= lim[2]):		
+		SaveState()
+		relay.value(0)
+		ShowError("Auto Cut Out")
 
 @micropython.native
 def Cumulate(vals, dt):
@@ -344,7 +385,11 @@ def Cumulate(vals, dt):
 	v = vals[2]
 	r = cfg["R"][cfg["Mode"]]
 	vr = vals[vrix] 
-	i = max(0, vr / r)
+
+	# take relay state into account to compute i
+	# voltage across resistor is not valid when relay is off
+	i = max(0, vr / r) if relay.value() else 0
+		
 	dt /= SPH  #  dt in hours
 	state["A"] = i
 	state["V"] = v
@@ -352,16 +397,34 @@ def Cumulate(vals, dt):
 	state["Wh"] += max(0,v * i * dt)
 	GraphAddPt(v, i)
 
-@micropython.native  # when debug done, set in native please
-def ExecBtnPress(Keys):
+def ToggleRelay():
+	relay.value(1 - relay.value()) 
+	display["RelayDelay"] = time.ticks_ms() + 3000 
+	msg = "On" if relay.value() else "Off"
+	ShowSplash(f'Relay: {msg}')
+
+def ExecBtnPress():
 	#tft.fill_rect(100, 100, 200, 30, st7789.BLACK)
 	#Display(100,120,f'{Keys:04b}')
 	BLUE_BTN   = 1
 	RED_BTN    = 2
 	GREEN_BTN  = 4
-	YELLOW_BTN = 8 
+	YELLOW_BTN = 8
 
-	if Keys == RED_BTN or Keys == YELLOW_BTN:
+	Keys = KeyTrack["Last"]
+	long = KeyTrack["n"] >= 200 # 200 * 10ms = 2 sec => long press
+
+	if Keys == GREEN_BTN:
+		if long:
+			cfg["SMode"] += 1
+			if cfg["SMode"] >= len(SMODES): cfg["SMode"] =0
+			ShowSplash(["SMode set to:", SMODES[cfg["SMode"]], str(SLIMITS[cfg["SMode"]][1:])])
+			KeyTrack["Long"] = True
+			SaveCfg()
+		else:
+			ToggleRelay()
+
+	elif Keys == RED_BTN or Keys == YELLOW_BTN:
 		d = 1 if Keys == RED_BTN else -1
 		old = cfg["Range"]
 		cfg["Range"] += d
@@ -370,6 +433,7 @@ def ExecBtnPress(Keys):
 		if old != cfg["Range"] : print(f'>Range:{cfg["Range"]}')
 		DisplayCfg()
 		ads.setVoltageRange_mV(ADS1115_RNG[cfg["Range"]])
+		SaveCfg()
 
 	elif Keys == BLUE_BTN: 
 		old = cfg["Mode"] 
@@ -378,10 +442,10 @@ def ExecBtnPress(Keys):
 		if cfg["Mode"]<0: cfg["Mode"] = 2
 		if old != cfg["Mode"] : print(f'>Mode:{cfg["Mode"]}')
 		DisplayCfg()
-	elif Keys == GREEN_BTN + YELLOW_BTN: 
 		SaveCfg()
 	elif Keys == BLUE_BTN + GREEN_BTN: # 5 blue and green
-		Restart()
+		Restart(long)
+		KeyTrack["Long"] = long
 	elif Keys == RED_BTN + YELLOW_BTN: # 10 red + yellow	(toggle-autoscale)
 		cfg["AutoScale"] = 1 - cfg["AutoScale"]
 		if (Graph["Xix"] > 0) and cfg["AutoScale"]: 
@@ -393,6 +457,10 @@ def ExecBtnPress(Keys):
 	elif Keys == BLUE_BTN + YELLOW_BTN:
 		RestoreState()
 
+	KeyTrack["n"] = 0
+	KeyTrack["Last"] = 0
+
+@micropython.native 
 def ReScale():
 	for g in ["V","I"]:
 		max = -9999; min = 9999
@@ -421,8 +489,8 @@ def RestoreState():
 		with open("state.json", "r") as f:
 			s = f.read()		
 		s = s.replace("array('f', [","[")
-		s = s.replace("]),","],")
-		#print(s)
+		s = s.replace("])","]")
+		# print(s)
 
 		js = json.loads(s)
 		#print(js)
@@ -434,7 +502,7 @@ def RestoreState():
 		ReScale()
 		ShowPause()
 	except:
-		Restart() # no saved file, clear graph
+		Restart(True) # no saved file, clear graph
 
 @micropython.native
 def CheckKeys():	
@@ -455,17 +523,21 @@ def CheckKeys():
 		if Keys > 0 and err == 1: display["Error"] = 2 # request wait for release
 		return
 
+	if KeyTrack["Long"]:
+		if Keys == 0: KeyTrack["Long"] = False
+		return
+
 	# actions are on release to allow multi button press
 	if Keys == 0:
 		if (KeyTrack["n"]>10):  # do action
-			ExecBtnPress(KeyTrack["Last"]) 		
-		KeyTrack["n"] = 0
-		KeyTrack["Last"] = 0
+			ExecBtnPress() 		
 	elif Keys>KeyTrack["Last"]:
 		KeyTrack["Last"] = Keys
 		KeyTrack["n"] = 0
 	elif Keys > 0 and Keys == KeyTrack["Last"]:
 		KeyTrack["n"] += 1
+		if KeyTrack["n"] >= 200: # long press
+			ExecBtnPress()
 
 import math 
 
@@ -484,6 +556,7 @@ def main():
 
 	Avg_Cnt = 64
 	delay = 2_000_000 # 2_000_000 # us
+	delay_s = delay // 1_000_000 
 
 	ads.setAvgCNt(Avg_Cnt)
 	ads.setVoltageRange_mV(ADS1115_RNG[cfg["Range"]])
@@ -492,8 +565,14 @@ def main():
 	Chnls = (0, 1, 7) # AIN0, AIN1, AIN0-AIN1 (R1, R1+R2, V)
 	t0 = time.ticks_us()
 
-	# x = 0  # to debug graph
+	lcnt = 0
 	while(True):
+		# periodical stuff (every minute)
+		lcnt += 1
+		if lcnt * delay_s >= 60: 
+			lcnt = 0; 
+			ads.setVoltageRange_mV(ADS1115_RNG[cfg["Range"]]) # re-set gain amp  
+
 		DisplayTop()
 		while time.ticks_diff(time.ticks_us(), t0) < delay:
 			ProcessMessages()
@@ -509,6 +588,7 @@ def main():
 		if not display["Pause"]: 
 			print("acq=", end="")
 			print(vals + (rt,))
-			Cumulate(vals, dt)	
+			Cumulate(vals, dt)
+			Disconnect()
 		state["T"] = rt				
 main()
