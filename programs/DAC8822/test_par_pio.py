@@ -6,7 +6,7 @@ machine.freq(200_000_000)
 
 # must run at 100MHz clock. 1 ns per clock
 from rp2 import PIO, asm_pio, StateMachine
-from machine import Pin
+from machine import Pin, PWM
 from dma import Dma
 import time, array, uctypes
 
@@ -18,13 +18,22 @@ import time, array, uctypes
 def _DAC8822():
 	pull(block)         # pull takes a value from tx fifo into osr    
 	out(pins,21) [9]    # D0-D15 + nc + A0 + U1/U2 and set /WR low + Tas 10ns
-	#pull(block)			# for debug, comment this line for prod 
-	#mov(pins,y)         # y set to end transfer: rise /wr and lower LDAC (U1-U2)
+
+	# debug delay 0.25 sec
+	mov(x,isr)
+	label('d1')
+	jmp(x_dec,'d1')[9]  # 10 ms
+
+	mov(pins,y)         # y set to end transfer: rise /wr and lower LDAC (U1-U2)
+
+	# debug delay 0.25 sec
+	mov(x,isr)
+	label('d2')
+	jmp(x_dec,'d2')[1]  # 2ms
 
 SMID = 0
 PIOTX = 0x50200010 + 4 * SMID
 sm = StateMachine(SMID, _DAC8822, 100_000_000, out_base=Pin(0))
-
 
 def tst1():
 	START = 3
@@ -43,7 +52,9 @@ def tst1():
 # test to send multi channel data
 def tst2():
 	global dmas,bufs
-	CH_CNT = 1 # 4 later
+
+	pwm = PWM(22,freq=25,duty_u16=8192)
+	CH_CNT = 4 # 4 later
 	tst_size = 32
 	dmas = []; cdmas = []; bufs = []; caddr = array.array('L',[0]*4) 
 	for i in range(CH_CNT):
@@ -54,12 +65,15 @@ def tst2():
 		caddr[i] = uctypes.addressof(blk)
 		dma.SetChData(blk,blk,tst_size,False)
 		dma.SetWriteAdd(PIOTX)
-		dma.SetTREQ(0, 1, 32768) # DMA Timer 0 @ 3kHz		
-		for j in range(0,32):
-			if   i==0: blk[j] = 0xAA00 + j #2 ** (j%16) 
+		# dma.SetTREQ(0, 1, 32768) # DMA Timer 0 @ 3kHz		
+		dma.SetDREQ(35)  # in debug: send at PWM22/3A wrap speed = slow
+		for j in range(tst_size):
+			ch = (j + 2) << 17
+			if   i==0: blk[j] = 2 ** (j%16) 
 			elif i==1: blk[j] = 2 ** (j if j<16 else 31-j)
-			elif i==2: blk[j] = (3 << j//2) & 0xFFFF
-			else: blk[j] = (3 << (31-j)//2) & 0xFFFF
+			elif i==2: blk[j] = (3 << (j%15)) 
+			else: blk[j] = (3 << (16-(j%15))) & 0xFFFF
+			blk[j] += ch
 		# print(blk)
 		bufs.append(blk)
 
@@ -69,29 +83,40 @@ def tst2():
 		cdma.SetAddrInc(0,0) # re-write same data same place (data buffer start address at READ_ADDR)
 		dmas[i].ChainTo(cdma.ch)		
 		cdma.SetReadAdd(uctypes.addressof(caddr) + 4 * i) 
-		print(uctypes.addressof(caddr) + 4 * i)
+		# print(hex(uctypes.addressof(caddr) + 4 * i))
 		cdma.SetWriteAdd(Dma.BASE_DMA + dmas[i].ch*0x40 + 0x3c)  # AL3_READ_ADDR_TRIG, will re-trigger dma
 		cdma.SetCnt(1)
 		cdmas.append(cdma)
-		cdma.Info()
 
+	# Dma.Scan()
 	for i in range(CH_CNT):
 		dmas[i].Trigger()
+	
+	# time.sleep(1)
+	# Dma.Scan()
 
 	while True:
+	#for i in range(10):
 		# print('\33c',end='') # clear screen in most terminals
-		for i in range(CH_CNT):
-			dmas[i].Info()
-			cdmas[i].Info()
-		Dma.Scan()
-		time.sleep(2)
+		#for i in range(CH_CNT):
+		#	dmas[i].Info()
+		#	cdmas[i].Info()
+		# Dma.Scan()
+		time.sleep(1)
 
 def main():
 	print('\33c',end='') # clear screen in most terminals
 	rst = Pin(21,Pin.OUT,value=0)
 	time.sleep_us(1)
 	rst.value(1)
-	sm.put((0b1000<<17) + 0x7FFF)  # set /wr high and U1/U2 low. Data mid point
+
+	# for debug: set y to loop count for slow down delay
+	sm.put(100_000) # 1ms per clock @ 100MHz  
+	sm.exec('pull()')
+	sm.exec('mov(isr, osr)')	# store end write code in PIO register y 
+
+	# set /wr high and U1/U2 low. Data mid point
+	sm.put((0b1000<<17) + 0x7FFF)  
 	sm.exec('pull()')
 	sm.exec('mov(y, osr)')	# store end write code in PIO register y 
 	sm.active(True)
