@@ -11,7 +11,8 @@ from dma import Dma
 import time, array, uctypes
 
 @asm_pio(
-	out_init=(PIO.OUT_LOW,) * 21, # 21
+	out_init=(PIO.OUT_LOW,) * 21, 
+	set_init=PIO.OUT_LOW,
 	autopull=False,
 	out_shiftdir=PIO.SHIFT_RIGHT,
 	fifo_join=PIO.JOIN_TX)
@@ -24,16 +25,16 @@ def _DAC8822():
 	label('d1')
 	jmp(x_dec,'d1')[9]  # 10 ms
 
-	mov(pins,y)         # y set to end transfer: rise /wr and lower LDAC (U1-U2)
+	set(pins,1)         # set /WR to 1 (stop the write operation)
 
 	# debug delay 0.25 sec
 	mov(x,isr)
 	label('d2')
-	jmp(x_dec,'d2')[1]  # 2ms
+	jmp(x_dec,'d2')[3]  # 2ms
 
 SMID = 0
 PIOTX = 0x50200010 + 4 * SMID
-sm = StateMachine(SMID, _DAC8822, 100_000_000, out_base=Pin(0))
+sm = StateMachine(SMID, _DAC8822, 100_000_000, out_base=Pin(0),set_base=Pin(20))
 
 def tst1():
 	START = 3
@@ -50,16 +51,15 @@ def tst1():
 		d = d << 1 if d<0xFFFF else START
 
 # test to send multi channel data
-def tst2():
+def tst2(CH_CNT):
 	global dmas,bufs
 
-	pwm = PWM(22,freq=25,duty_u16=8192)
-	CH_CNT = 4 # 4 later
+	pwm = PWM(22,freq=15,duty_u16=8192)
 	tst_size = 32
 	dmas = []; cdmas = []; bufs = []; caddr = array.array('L',[0]*4) 
 	for i in range(CH_CNT):
 		dma = Dma(data_size=4)
-		dma.SetAddrInc(1,0)   # walk buffer but no inc for fixted PIO FIFO data address
+		dma.SetAddrInc(1,0)   # walk buffer but fixted PIO TXFIFO register address
 		dmas.append(dma)
 		blk = array.array('L',[0x7FFF]*tst_size) # init to mid point
 		caddr[i] = uctypes.addressof(blk)
@@ -68,12 +68,8 @@ def tst2():
 		# dma.SetTREQ(0, 1, 32768) # DMA Timer 0 @ 3kHz		
 		dma.SetDREQ(35)  # in debug: send at PWM22/3A wrap speed = slow
 		for j in range(tst_size):
-			ch = (j + 2) << 17
-			if   i==0: blk[j] = 2 ** (j%16) 
-			elif i==1: blk[j] = 2 ** (j if j<16 else 31-j)
-			elif i==2: blk[j] = (3 << (j%15)) 
-			else: blk[j] = (3 << (16-(j%15))) & 0xFFFF
-			blk[j] += ch
+			ch = (i + 2) << 17
+			blk[j] = (15 <<(i*4)) + ch
 		# print(blk)
 		bufs.append(blk)
 
@@ -110,17 +106,14 @@ def main():
 	time.sleep_us(1)
 	rst.value(1)
 
-	# for debug: set y to loop count for slow down delay
+	# for debug: set y for loop count to slowdown for human eye led blink
+	# The 3 following lines can optionally be commented for final 
 	sm.put(100_000) # 1ms per clock @ 100MHz  
 	sm.exec('pull()')
 	sm.exec('mov(isr, osr)')	# store end write code in PIO register y 
 
-	# set /wr high and U1/U2 low. Data mid point
-	sm.put((0b1000<<17) + 0x7FFF)  
-	sm.exec('pull()')
-	sm.exec('mov(y, osr)')	# store end write code in PIO register y 
 	sm.active(True)
 
-	tst2()
+	tst2(4)
 
 main()

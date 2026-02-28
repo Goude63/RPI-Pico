@@ -1,13 +1,11 @@
 # ----------------------------------------------------
 # pio code for CLT1100 rotary encoder
 # -------------------------------------
-machine.freq(200_000_000) 
 
 # must run at 100MHz clock. 1 ns per clock
 from rp2 import PIO, asm_pio, StateMachine
 from machine import Pin, Timer
 import time
-
 
 @asm_pio(out_init=(PIO.IN_HIGH, PIO.IN_HIGH), 
 		 fifo_join=PIO.JOIN_RX,
@@ -84,7 +82,7 @@ class CLT1100:
 		return 0 == self.btn.value()
 
 if __name__ == "__main__":	
-	rot = CLT1100(0, 26)
+	rot = CLT1100(0, 0)
 	lb = False
 	while True:
 		r = rot.GetTurn()
@@ -92,4 +90,3 @@ if __name__ == "__main__":
 		if rot.Btn() != lb:
 			if rot.Btn(): print('Clk',end = ' # ')
 			lb = rot.Btn()
-		#print(f'{A.value()}{C.value()}{bt.value()}',end='~')
