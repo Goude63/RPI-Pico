@@ -99,6 +99,7 @@ class TFT(object) :
   WHITE = TFTColor(0xFF, 0xFF, 0xFF)
   GRAY = TFTColor(0x80, 0x80, 0x80)
   DARK = TFTColor(0x40, 0x40, 0x40)
+  ORANGE = TFTColor(0xFF, 0x80, 0x27)
 
   @staticmethod
   def color( aR, aG, aB ) :
@@ -118,7 +119,7 @@ class TFT(object) :
     self.reset = machine.Pin(aReset, machine.Pin.OUT, machine.Pin.PULL_DOWN)
     self.cs = machine.Pin(aCS, machine.Pin.OUT, machine.Pin.PULL_DOWN)
     self.ledpwm = machine.PWM(machine.Pin(aLED))
-    self.ledpwm.freq(10000)
+    self.ledpwm.freq(600)
     self.led(75)
     self.cs(1)
     self.spi = spi
@@ -132,6 +133,7 @@ class TFT(object) :
   def on( self, aTF = True ) :
     '''Turn display on or off.'''
     self._writecommand(TFT.DISPON if aTF else TFT.DISPOFF)
+    self.led(75)
 
   @micropython.native
   def invertcolor( self, aBool ) :

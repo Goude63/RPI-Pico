@@ -9,116 +9,208 @@ import math
 #		Global module "Constants"		#
 #########################################
 # ttf setup
-FW = sysfont["Width"]
+FW = sysfont["Width"] + 1   # the tft.text function adds 1 pixel between 5 pic characters 
 FH = sysfont["Height"]
 PIXWIDTH = 160
 PIXHEIGHT = 128
-CARWIDTH = PIXWIDTH / FW
-CARHEIGHT = PIXHEIGHT / FH
+CARWIDTH = PIXWIDTH // FW
+CARHEIGHT = PIXHEIGHT // FH
 ROTATION = 1
 
-spi = SPI(0, baudrate=250_000_000, polarity=0, phase=0, 
-		  sck=Pin(18), mosi=Pin(19), miso=None)
-tft = TFT(spi,16,17,20,21)
-
-# information for editing items
-EDIT_DEF =  {  # defaults: defv:0, defd:1, res:min 
+# information for editing items. Note: defd =0 means first digit after decimal point
+EDIT_DEF =  {  # defaults: defv:0, defd:1, res:min, color: white
 'Ch': {
-	'0-sh': {'type':'w','min':0,   'max':4,  'u':'',  'res' :1},
-	'1-fr': {'type':'f','min':0.1, 'max':5e6,'u':'Hz','defd':3,'defv':1000000},
-	'2-am': {'type':'f','min':1e-3,'max':10, 'u':'V' ,'defv':1},
-	'3-ph': {'type':'f','min':-180,'max':180,'u':'o', 'defd':2,'res':0.1},
-	'4-on': {'type':'b','min':0,   'max':1,  'u':'',  'res' :1}},
-'cfg': {
-	'1-bright':{'type':'f','min':0, 'max':100, 'defv':75},
-	'2-Vlimit':{'type':'f','min':1, 'max':10, 'u':'V','defv':3,'res':1}}
-}	
+	'0': {'name':'on',   'type':'b','min':0,   'max':1,  'u':'',  'res' :1},
+	'1': {'name':'shape','type':'w','min':0,   'max':4,  'u':'',  'res' :1},
+	'2': {'name':'fr', 'type':'f','min':0.1, 'max':5e6,'u':'Hz','defd':3,  'color':TFT.BLUE,'defv':1000},
+	'3': {'name':'am', 'type':'f','min':1e-3,'max':10, 'u':'V' ,'defv':1,  'color':TFT.PURPLE},
+	'4': {'name':'of', 'type':'f','min':-10, 'max':10, 'u':'V' ,'defd':-2, 'res'  :0.1, 'color':TFT.ORANGE},
+	'5': {'name':'ph', 'type':'f','min':-180,'max':180,'u':'o', 'defd':2,  'res'  :0.1, 'color':TFT. GRAY}},
+'Cfg': {
+	'0':{'name':'Brightness', 'type':'f','min':0, 'max':100, 'u':'%', 'defv':75},
+	'1':{'name':'Volt Limit', 'type':'f','min':1, 'max':10,  'u':'V', 'defv':3,'res':0.1}}}	
 
 # Editable elements values, factor/digit, col, row, font size of current screen location
 EDIT_VALS = {}
+PAGES = { 'Top':{'layout':'2x2', 'blocks':['Ch'] * 4 }}
+# FOCUS / DIGIT info
+FOCUS  = {'block':0,'param':'fr'}
+ACTIVE = ''
+PAGE   = {}
 
-PAGE = { 
-	'Top':{'layout':'2x2', 'blocks':['Ch_1','Ch_2','Ch_3','Ch_4'] }
-}
+# returns (param name, string value including units, color
+# cofs = horizontal 1st character display offset, ei = index in string where focus is) 
+#@micropython.native
+def gformat(bix, pix, g):
+	p = EDIT_DEF[g][pix]['name']
+	v = g + '_' + str(bix) # variavle / value e.g. Ch_1
+	color = EDIT_DEF[g][pix]['color']
+	
+	ei = None
+	if FOCUS['block'] == bix and FOCUS['param'] == p: ei = -int(FOCUS[p])
 
-FOCUS = {'block':1, 'param':'2-am', 'digit':3}
+	# print(v,p)
+	raw =EDIT_VALS[v][p]['value']
+	s=''; sh = 0
+	u = EDIT_DEF[g][pix]['u']
+	if u == 'Hz':
+		if raw>=1e6   	: s = f'{raw/1e6:7.3f}'; u='MHz'; sh = 6
+		elif raw>1000 	: s = f'{raw/1e3:7.3f}'; u='KHz'; sh = 3
+		else			: s = f'{raw:7.1f}';     u=' Hz'; sh = 0
+	elif u == 'V':
+		if raw<0.1	: s = f'{p}: {raw*1000:3.0f}'; u=' mV'; sh = -3 
+		else		: s = f'{p}: {raw:5.3f}'; sh = 0
+	elif u == 'o':
+		s = f'{p}: {raw:3.0f}'; sh = 0
+	
+	# adjust edit character offset from left of string
+	if ei is None: 
+		ei = -1
+	else:
+		dp = s.find('.')
+		if dp<0: dp = len(s); s += '.' # add temp '.'
+		ei = ei + dp + sh
+		if ei>=dp and s[dp].isdigit(): ei += 1
+		while not s[ei].isdigit() and ei>dp: 
+			ei -= 1
+			FOCUS[p] = str(int(FOCUS[p]) + 1)
+		if s[len(s)-1] == '.': s = s[:-1] # remove temp '.'
 
-def format(v,p):
-	pass
+	return (f'{s} {u}', color, ei)
 
 # wrapper that uses character sizes as coordinates 
-def text(col,row, txt, color,size):
-	tft.text((col*FW, row*FH), txt, color, sysfont, size)
+def text(col,row, txt, color=TFT.WHITE, fs=1):
+	tft.text((col*FW, row*FH), txt, color, sysfont, fs)
 
 #TFT(spi, aDC, aReset, aCS, aLED)
 class SGUI:
 		# 'defv' not stated: =0. 'res' not stated: =min. defd not stated: =1
 		# parameters start with a 'n-' to facilitate friendly sorted enumeration 
 
-		
 	def __init__(self): 
+		global tft
+		spi = SPI(0, baudrate=machine.freq()//2, polarity=0, phase=0, sck=Pin(2), mosi=Pin(3), miso=None)
+		tft = TFT(spi,4,5,6,46) # REG, RST, /CS, LED
 		tft.initr()
-		tft.rotation(ROTATION)
-		tft.rgb(True)
-		tft.led(75)
-		self.enc = (CLT1100(1, 0), CLT1100(2, 3)) # 2 encoders as UI
+		tft.rotation(ROTATION);	tft.rgb(True); tft.fill(); tft.led(75)
+
+		# 2 encoders ( see schematics for pins )
+		self.enc = (CLT1100(10, 32,40 ), CLT1100(11, 34, 41)) 
+		self.E2Mode = 'Val'  # 'Val' or 'Digit'  
 
 		# add default params keys' EDIT_VALS (defv, res and defd)
-		for elem in EDIT_DEF: 					# elem = 'Ch', 'cfg'...
-			for param in EDIT_DEF[elem]:		# param = 'fr', 'am' ...
-				if not 'defv' in EDIT_DEF[elem][param]: 
-					EDIT_DEF[elem][param]['defv'] = 0
-				if not 'defd' in EDIT_DEF[elem][param]: 
-					EDIT_DEF[elem][param]['defd'] = 1
-				if not 'res' in EDIT_DEF[elem][param]: 
-					EDIT_DEF[elem][param]['res'] = EDIT_DEF[elem][param]['min']
-		
-		# create current EDIT_VALS for all parameters, and default focused digit/factor
-		for elem in EDIT_DEF:
-			Ch = 1
-			while Ch <= (4 if elem == 'Ch' else 1):  
-				name = 'Ch_'+str(Ch) if elem=='Ch' else elem  # name = EDIT_DEF name + '_' + count/index
+		print(FOCUS)
+		for grp in EDIT_DEF: 				# grp = 'Ch', 'cfg'...
+			for pix in EDIT_DEF[grp]:		# pix = '1', '2' ...
+				if not 'defv' in EDIT_DEF[grp][pix] : EDIT_DEF[grp][pix]['defv'] = 0
+				if not 'res' in EDIT_DEF[grp][pix]  : EDIT_DEF[grp][pix]['res'] = EDIT_DEF[grp][pix]['min']
+				if not 'color' in EDIT_DEF[grp][pix]: EDIT_DEF[grp][pix]['color'] = TFT.WHITE
 
+				# set focus digit for all parameter types
+				if 'defd' in EDIT_DEF[grp][pix]: 
+					FOCUS[EDIT_DEF[grp][pix]['name']] = EDIT_DEF[grp][pix]['defd']
+				else:
+					FOCUS[EDIT_DEF[grp][pix]['name']] = '1'
+
+		# create current EDIT_VALS for all parameters, and default focused digit/factor
+		for grp in EDIT_DEF:
+			if grp in ['Ch']:
+				names = []
+				for i in range(4): names.append(grp + '_' + str(i))
+			else: names=[grp]
+
+			for name in names:
 				EDIT_VALS[name] = {}
-				for param in EDIT_DEF[elem]:
-					EDIT_VALS[name][param] = {}
-					EDIT_VALS[name][param]['value'] = EDIT_DEF[elem][param]['defv']
-					EDIT_VALS[name][param]['edigit'] = EDIT_DEF[elem][param]['defd']			
-				Ch += 1
+				for pix in EDIT_DEF[grp]:
+					pn = EDIT_DEF[grp][pix]['name']
+					EDIT_VALS[name][pn] = {}
+					EDIT_VALS[name][pn]['value'] = EDIT_DEF[grp][pix]['defv']
+					# EDIT_VALS[name][pix]['edigit'] = EDIT_DEF[grp][pix]['defd']
  
-	def DrawParam(self, v, p, col, row, fs):
-		dn = p[2:] # remove the 'n-' for the parameter name			
-		text(col+1, row, dn+':', tft.WHITE, fs)
-		# print(v, p, EDIT_VALS[v][p]['value'])
-		text(col+5, row, f'{EDIT_VALS[v][p]["value"]}' , tft.WHITE, fs)
-		r = 0 if dn == 'sh' or dn == 'on' else 1
+	#@micropython.native
+	def DrawParam(self, bix, pix, g, rof, fs, col=-1, row=-1):
+		(s, c, ei) = gformat(bix, pix, g)
+		pn = EDIT_DEF[g][pix]['name']
+
+		print(f'{bix}/{pix}', end = ',' if bix<3 or pix<'5' else '\n')
+
+		color = tft.WHITE
+		if col<0 and PAGES[ACTIVE]['layout'] =='2x2':
+			col = (bix%2)*(CARWIDTH//2); 
+			row = (bix//2)*(CARHEIGHT//2)
+
+		if int(pix)==0:	
+			tft.fillrect((col*FW,row*FH),(PIXWIDTH//2,PIXHEIGHT//2), tft.BLACK)
+			if bix == FOCUS['block']:
+				color = tft.GREEN
+				tft.rect((col*FW,row*FH),(PIXWIDTH//2-2,PIXHEIGHT//2-1), color)
+			text(0.5 + col, 0.5 + row, f'{g}{bix+1}', color, fs*2)    # print block name eg. ch1, settings...
+		if s:
+			row += rof
+			text(col+1, row, s, c, fs)
+			if ei>=0: 
+				c ^= 0xFFFFFF
+				x = (col+1+ei) * FW
+				y = (row+1)*FH - 1
+				text(col+1+ei, row, s[ei], c, fs)
+				tft.line((x,y),(x+FW,y),tft.RED)
+		
+		r = 0 if pn == 'sh' or pn == 'on' else 1
 		return r
 
-	def DrawBlock(self,ix , v, col, row, fs): 
-		print(col,row)
-		dfb = v.split('_')[0]  # get definition block name and 
-		if dfb == 'Ch' and ix == FOCUS['block']: 
-			tft.rect((col*FW,row*FH),(PIXWIDTH//2,PIXHEIGHT//2), tft.GREEN)
-		text(0.5 + col, 0.5 + row, f'{dfb}{ix}',tft.WHITE, fs*2)    # print block name eg. ch1, settings...
-		row += 3
+	def DrawBlock(self, bix): 
+		gr = PAGES[ACTIVE]['blocks'][bix]
+		fs = 1
+		rof = 2
+		if PAGES[ACTIVE]['layout'] =='2x2':		
+			col = (bix%2)*(CARWIDTH//2); 
+			row = (bix//2)*(CARHEIGHT//2)
 
-		for p in sorted(EDIT_DEF[dfb]):
-			row += self.DrawParam(v, p, col, row, fs)
+		for pix in sorted(EDIT_DEF[gr]):
+			rof += self.DrawParam(bix, pix, gr, rof, fs, col, row)
 
-	def ShowPage(self,pg):   # e.g. call: ShowPage(PAGE['Top'])
-		tft.fill(tft.BLACK)
-		if pg['layout'] =='2x2':
-			for i,v in enumerate(pg['blocks']):
-				self.DrawBlock(i+1, v, (i%2)*(CARWIDTH//2),(i//2)*(CARHEIGHT//2), 1)
+	def ShowPage(self,pg):   # e.g. call: ShowPage('Top')
+		global ACTIVE, PAGE
+		ACTIVE = pg
+		PAGE = PAGES[pg]
+		if PAGE['layout'] =='2x2':
+			for i in range(4): self.DrawBlock(i)
+	
+	def ChangeSelPar(self, delta):
+		if delta == 0: return
 
+		# find pix
+		par_names = []
+		gr = PAGE['blocks'][FOCUS['block']]
+		for pix in sorted(EDIT_DEF[gr]): par_names.append(EDIT_DEF[gr][pix]['name'])
+		newix = (par_names.index(FOCUS['param']) + delta) % len(par_names)
+
+		# apply delta clip to 0, max
+		newix = min(max(0, newix),len(par_names) - 1)
+		FOCUS['param'] = par_names[newix]
+		self.DrawBlock(FOCUS['block'])
+
+	def ProcessKnobs(self):
+		e1 = self.enc[1].GetTurn()
+		if e1: self.ChangeSelPar(e1)
 
 if __name__ == '__main__':
 	print('\33c',end='') # clear screen in most terminals
-	tst = SGUI()
-	# print(EDIT_VALS)
-	# print(EDIT_VALS['Ch_1']['2-fr']['value'])
-	# tft.fill(tft.BLACK)
-	# print(sysfont['CARWIDTH'],sysfont['CARHEIGHT'])
-	tst.ShowPage(PAGE['Top'])
 
+	tst = SGUI()
+	print(FOCUS)
+	tst.ShowPage('Top')
+
+	while True:	
+		chng = tst.ProcessKnobs()
+		if chng: print(chng)
+		time.sleep(0.2)
+
+'''
+	blk = 0
+	if True:
+		tst.DrawBlock(PAGE['Top'], blk)
+		blk = (blk+1)%4
+		time.sleep(0.25)
+'''
 

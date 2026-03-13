@@ -1,0 +1,15 @@
+
+EDIT_DEF
+{'Ch': {'3': {'defd': 3, 'res': 0.1, 'name': 'fr', 'defv': 1000, 'min': 0.1, 'color': 31, 'max': 5000000.0, 'u': 'Hz', 'type': 'f'}, '2': {'u': '', 'max': 4, 'name': 'shape', 'res': 1, 'defv': 0, 'type': 'w', 'color': 65535, 'min': 0}, '4': {'u': 'V', 'max': 10, 'name': 'am', 'color': 63519, 'defv': 1, 'type': 'f', 'res': 0.001, 'min': 0.001}, '5': {'type': 'f', 'defd': -2, 'name': 'of', 'defv': 0, 'min': -10, 'color': 64516, 'max': 10, 'u': 'V', 'res': 0.1}, '1': {'u': '', 'max': 1, 'name': 'on', 'res': 1, 'defv': 0, 'type': 'b', 'color': 65535, 'min': 0}, '6': {'type': 'f', 'defd': 2, 'name': 'ph', 'defv': 0, 'min': -180, 'color': 33808, 'max': 180, 'u': 'o', 'res': 0.1}}, 'Cfg': {'1': {'color': 65535, 'max': 100, 'name': 'Brightness', 'res': 0, 'defv': 75, 'type': 'f', 'min': 0}, '2': {'u': 'V', 'max': 10, 'name': 'Volt Limit', 'res': 1, 'defv': 3, 'type': 'f', 'color': 65535, 'min': 1}}}
+
+EDIT_VALS
+{'Ch_1': {'of': {'value': 0}, 'on': {'value': 0}, 'ph': {'value': 0}, 'fr': {'value': 1000}, 'shape': {'value': 0}, 'am': {'value': 1}}, 'Ch_0': {'of': {'value': 0}, 'on': {'value': 0}, 'ph': {'value': 0}, 'fr': {'value': 1000}, 'shape': {'value': 0}, 'am': {'value': 1}}, 'Ch_3': {'of': {'value': 0}, 'on': {'value': 0}, 'ph': {'value': 0}, 'fr': {'value': 1000}, 'shape': {'value': 0}, 'am': {'value': 1}}, 'Ch_2': {'of': {'value': 0}, 'on': {'value': 0}, 'ph': {'value': 0}, 'fr': {'value': 1000}, 'shape': {'value': 0}, 'am': {'value': 1}}, 'Cfg': {'Brightness': {'value': 75}, 'Volt Limit': {'value': 3}}}
+
+FOCUS  = {'block':0,'param':'fr', 'fr': 2}  # fr => digit/offset
+
+EDIT_VALS = {}
+PAGES = { 'Top':{'layout':'2x2', 'blocks':['Ch'] * 4 }}
+# FOCUS / DIGIT info
+FOCUS  = {'block':0,'param':'fr'}
+ACTIVE = ''
+PAGE   = {'blocks': ['Ch', 'Ch', 'Ch', 'Ch'], 'layout': '2x2'}
