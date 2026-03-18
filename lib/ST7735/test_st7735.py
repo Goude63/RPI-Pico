@@ -2,17 +2,16 @@ machine.freq(280_000_000)
 from ST7735 import TFT
 from sysfont import sysfont
 from machine import SPI,Pin
-import time
-import math
+import time, math, gc
 #spi = SPI(1, baudrate=100_000_000, polarity=0, phase=0,
 #          sck=Pin(10), mosi=Pin(11), miso=None)
-spi = SPI(0, baudrate=100_000_000, polarity=0, phase=0,
-          sck=Pin(18), mosi=Pin(19), miso=None)
+spi = SPI(0, baudrate=100_000_000, polarity=0, phase=0, sck=Pin(18), mosi=Pin(19), miso=None)
 
-# tft=TFT(spi,16,17,18)
-tft=TFT(spi,16,17,20)
+tft=TFT(spi, 20, 17, 16, 21)
+# tft=TFT(spi,4,5,6,46)
 tft.initr()
-tft.rotation(3)
+BASE_ROTATION = 3
+tft.rotation(BASE_ROTATION)
 tft.rgb(True)
 
 @micropython.native
@@ -112,7 +111,7 @@ def testroundrects():
 
 @micropython.native
 def tftprinttest():
-    tft.fill(TFT.BLACK);
+    tft.fill(TFT.BLACK)
     v = 30
     tft.text((0, v), "Hello World!", TFT.RED, sysfont, 1, nowrap=True)
     v += sysfont["Height"]
@@ -142,16 +141,20 @@ def tftprinttest():
     v += sysfont["Height"]
     tft.text((0, v), " seconds.", TFT.WHITE, sysfont)
 
-@micropython.native
+#@micropython.native
 def test_main():
+    tft.led(0)
     tft.fill(TFT.BLACK)
-    tft.text((0, 0), "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Curabitur adipiscing ante sed nibh tincidunt feugiat. Maecenas enim massa, fringilla sed malesuada et, malesuada sit amet turpis. Sed porttitor neque ut ante pretium vitae malesuada nunc bibendum. Nullam aliquet ultrices massa eu hendrerit. Ut sed nisi lorem. In vestibulum purus a tortor imperdiet posuere. ", TFT.WHITE, sysfont, 1)
-    time.sleep_ms(1000)
+    tft.text((0, 0), "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Curabitur adipiscing ante sed nibh tincidunt feugiat. Maecenas enim massa, fringilla sed malesuada et, malesuada sit amet turpis. Sed porttitor neque ut ante pretium vitae malesuada nunc bibendum. Nullam aliquet ultrices massa eu hendrerit. Ut sed nisi lorem. In vestibulum purus a tortor imperdiet posuere. ", TFT.WHITE, sysfont, 1, False)
 
+    tft.fade(0,75)
+    
     tft.rotation(0)
     tft.LoadBMP('girl.bmp')
-    time.sleep_ms(2000)
-    tft.rotation(3)
+    tft.fade(75,0)
+    tft.rotation(BASE_ROTATION)
+    time.sleep_ms(1500)
+    tft.led(75)
 
     tftprinttest()
     time.sleep_ms(2000)
@@ -180,4 +183,9 @@ def test_main():
     testtriangles()
     time.sleep_ms(500)
 
+    tft.fade(75,0)
 test_main()
+
+print(f'before collect:{gc.mem_free()}')
+gc.collect()
+print(f'after collect:{gc.mem_free()}')
