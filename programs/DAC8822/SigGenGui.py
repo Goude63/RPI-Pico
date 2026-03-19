@@ -1,21 +1,24 @@
 machine.freq(250_000_000)
 from ST7735 import TFT
-from CLT1100 import CLT1100
-from sysfont import sysfont
+from xCLT1100 import CLT1100
+from f_sys	 import f_sys
+from f_10x14 import f_10x14
 from machine import SPI,Pin
 import time
-import math
+
 #########################################
 #		Global module "Constants"		#
 #########################################
 # ttf setup
-FW = sysfont["Width"] + 1   # the tft.text function adds 1 pixel between 5 pic characters 
-FH = sysfont["Height"]
-PIXWIDTH = 160
-PIXHEIGHT = 128
-CARWIDTH = PIXWIDTH // FW
-CARHEIGHT = PIXHEIGHT // FH
-ROTATION = 1
+FW = f_sys["Width"] + 1   # the tft.text function adds 1 pixel between 5 pic characters 
+FH = f_sys["Height"]
+FONTS = (f_sys, f_10x14)  # second font must be double size of font1
+PIXWIDTH	= 160
+PIXHEIGHT	= 128
+CARWIDTH	= PIXWIDTH // FW
+CARHEIGHT	= PIXHEIGHT // FH
+ROTATION	= 1
+LONG_BTN_MS	= 1200
 
 # information for editing items. Note: defd =0 means first digit after decimal point
 EDIT_DEF =  {  # defaults: defv:0, defd:1, res:min, color: white
@@ -46,8 +49,7 @@ def gformat(bix, pix, g):
 	v = g + '_' + str(bix) # variavle / value e.g. Ch_1
 	color = EDIT_DEF[g][pix]['color']
 	
-	ei = None
-	if FOCUS['block'] == bix and FOCUS['param'] == p: ei = -int(FOCUS[p])
+	ei = -int(FOCUS[p])	if FOCUS['block'] == bix and FOCUS['param'] == p else None
 
 	# print(v,p)
 	raw =EDIT_VALS[v][p]['value']
@@ -79,8 +81,9 @@ def gformat(bix, pix, g):
 	return (f'{s} {u}', color, ei)
 
 # wrapper that uses character sizes as coordinates 
-def text(col,row, txt, color=TFT.WHITE, fs=1):
-	tft.text((col*FW, row*FH), txt, color, sysfont, fs)
+def text(col,row, txt, color=TFT.WHITE, Big=False):
+	fix = 1 if Big else 0
+	tft.text((col*FW, row*FH), txt, color, FONTS[fix])
 
 #TFT(spi, aDC, aReset, aCS, aLED)
 class SGUI:
@@ -95,8 +98,10 @@ class SGUI:
 		tft.rotation(ROTATION);	tft.rgb(True); tft.fill(); tft.led(75)
 
 		# 2 encoders ( see schematics for pins )
-		self.enc = (CLT1100(10, 32,40 ), CLT1100(11, 34, 41)) 
-		self.E2Mode = 'Val'  # 'Val' or 'Digit'  
+		self.enc = (CLT1100(10, 32, 40), CLT1100(11, 34, 41)) 
+		self.btns = 0
+		self.btn_wait0 = False
+		self.E2Mode = 'Param'  # vs 'Digit'
 
 		# add default params keys' EDIT_VALS (defv, res and defd)
 		print(FOCUS)
@@ -128,12 +133,11 @@ class SGUI:
 					# EDIT_VALS[name][pix]['edigit'] = EDIT_DEF[grp][pix]['defd']
  
 	#@micropython.native
-	def DrawParam(self, bix, pix, g, rof, fs, col=-1, row=-1):
+	def DrawParam(self, bix, pix, g, rof, col=-1, row=-1):
 		(s, c, ei) = gformat(bix, pix, g)
 		pn = EDIT_DEF[g][pix]['name']
 
-		print(f'{bix}/{pix}', end = ',' if bix<3 or pix<'5' else '\n')
-
+		# print(f'{bix}/{pix}', end = ',' if bix<3 or pix<'5' else '\n')
 		color = tft.WHITE
 		if col<0 and PAGES[ACTIVE]['layout'] =='2x2':
 			col = (bix%2)*(CARWIDTH//2); 
@@ -144,30 +148,33 @@ class SGUI:
 			if bix == FOCUS['block']:
 				color = tft.GREEN
 				tft.rect((col*FW,row*FH),(PIXWIDTH//2-2,PIXHEIGHT//2-1), color)
-			text(0.5 + col, 0.5 + row, f'{g}{bix+1}', color, fs*2)    # print block name eg. ch1, settings...
+			text(0.5 + col, 0.5 + row, f'{g}{bix+1}', color, True)    # print block name eg. ch1, settings...
 		if s:
 			row += rof
-			text(col+1, row, s, c, fs)
+			text(col+1, row, s, c)
 			if ei>=0: 
 				c ^= 0xFFFFFF
 				x = (col+1+ei) * FW
 				y = (row+1)*FH - 1
-				text(col+1+ei, row, s[ei], c, fs)
-				tft.line((x,y),(x+FW,y),tft.RED)
+				text(col+1+ei, row, s[ei], c)
+
+				if self.E2Mode == 'Param': 
+					tft.rect((col*FW + 2, row*FH - 1),(PIXWIDTH//2-6, FH + 2), c) 
+				else: 
+					tft.line((x,y),(x+FW,y),tft.RED)
 		
 		r = 0 if pn == 'sh' or pn == 'on' else 1
 		return r
 
 	def DrawBlock(self, bix): 
 		gr = PAGES[ACTIVE]['blocks'][bix]
-		fs = 1
 		rof = 2
-		if PAGES[ACTIVE]['layout'] =='2x2':		
+		if PAGES[ACTIVE]['layout'] =='2x2':	
 			col = (bix%2)*(CARWIDTH//2); 
 			row = (bix//2)*(CARHEIGHT//2)
 
 		for pix in sorted(EDIT_DEF[gr]):
-			rof += self.DrawParam(bix, pix, gr, rof, fs, col, row)
+			rof += self.DrawParam(bix, pix, gr, rof, col, row)
 
 	def ShowPage(self,pg):   # e.g. call: ShowPage('Top')
 		global ACTIVE, PAGE
@@ -190,15 +197,57 @@ class SGUI:
 		FOCUS['param'] = par_names[newix]
 		self.DrawBlock(FOCUS['block'])
 
+	def NextChannel(self):
+		prev = FOCUS['block']
+		nxt = (FOCUS['block'] + 1) % 4
+		FOCUS['block'] = nxt
+		self.DrawBlock(prev)
+		self.DrawBlock(nxt)
+
+	def ExecKnobPress(self, knob, long = False):
+		if long:
+			pass
+		else:
+			if knob == 1:  # top nom / E1 
+				self.NextChannel()
+			else:
+				if self.E2Mode == 'Param':
+					self.E2Mode = 'Digit'
+				else:  # 'Digit'
+					self.E2Mode = 'Param'
+				self.DrawBlock(FOCUS['block'])			
+
 	def ProcessKnobs(self):
-		e1 = self.enc[1].GetTurn()
-		if e1: self.ChangeSelPar(e1)
+		# new btns value 
+		btns = self.enc[0].Btn() + (self.enc[1].Btn() << 1)
+		# if btns: print(btns, end = ' ' )
+
+		# check knob press
+		if self.btn_wait0:
+			if btns == 0: 
+				self.btn_wait0 = False  # done waiting for release 
+				self.btns = 0
+		elif btns > self.btns:
+			self.btns = btns
+			self.btn_t0 = time.ticks_ms()
+		elif btns>0 and btns == self.btns: 
+			if time.ticks_diff(time.ticks_ms(), self.btn_t0) > LONG_BTN_MS:
+				self.ExecKnobPress(btns, True)
+		elif btns == 0 and self.btns > 0: # released :: short press
+			self.ExecKnobPress(self.btns)
+			self.btns = 0
+		
+		e2 = self.enc[1].GetTurn()
+		if e2: 
+			if self.E2Mode == 'Param':
+				self.ChangeSelPar(e2)
+		return False
 
 if __name__ == '__main__':
 	print('\33c',end='') # clear screen in most terminals
 
 	tst = SGUI()
-	print(FOCUS)
+	# print(FOCUS)
 	tst.ShowPage('Top')
 
 	while True:	
@@ -206,11 +255,4 @@ if __name__ == '__main__':
 		if chng: print(chng)
 		time.sleep(0.2)
 
-'''
-	blk = 0
-	if True:
-		tst.DrawBlock(PAGE['Top'], blk)
-		blk = (blk+1)%4
-		time.sleep(0.25)
-'''
 
