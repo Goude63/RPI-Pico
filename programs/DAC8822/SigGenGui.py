@@ -1,6 +1,6 @@
 machine.freq(250_000_000)
 from ST7735 import TFT
-from xCLT1100 import CLT1100
+from CLT1100 import CLT1100
 from f_sys	 import f_sys
 from f_10x14 import f_10x14
 from machine import SPI,Pin
@@ -10,15 +10,15 @@ import time
 #		Global module "Constants"		#
 #########################################
 # ttf setup
-FW = f_sys["Width"] + 1   # the tft.text function adds 1 pixel between 5 pic characters 
-FH = f_sys["Height"]
+FW = (f_sys["Width"] + 1, f_10x14["Width"] + 2) # the tft.text function adds 1 pixel between 5 pic characters 
+FH = (f_sys["Height"] + 1, f_10x14["Height"] + 2)
 FONTS = (f_sys, f_10x14)  # second font must be double size of font1
 PIXWIDTH	= 160
 PIXHEIGHT	= 128
-CARWIDTH	= PIXWIDTH // FW
-CARHEIGHT	= PIXHEIGHT // FH
+CARWIDTH	= PIXWIDTH // FW[0]
+CARHEIGHT	= PIXHEIGHT // FH[0]
 ROTATION	= 1
-LONG_BTN_MS	= 1200
+LONG_BTN_MS	= 500
 
 # information for editing items. Note: defd =0 means first digit after decimal point
 EDIT_DEF =  {  # defaults: defv:0, defd:1, res:min, color: white
@@ -40,6 +40,7 @@ PAGES = { 'Top':{'layout':'2x2', 'blocks':['Ch'] * 4 }}
 FOCUS  = {'block':0,'param':'fr'}
 ACTIVE = ''
 PAGE   = {}
+ZOOM = False
 
 # returns (param name, string value including units, color
 # cofs = horizontal 1st character display offset, ei = index in string where focus is) 
@@ -81,9 +82,10 @@ def gformat(bix, pix, g):
 	return (f'{s} {u}', color, ei)
 
 # wrapper that uses character sizes as coordinates 
-def text(col,row, txt, color=TFT.WHITE, Big=False):
-	fix = 1 if Big else 0
-	tft.text((col*FW, row*FH), txt, color, FONTS[fix])
+def text(col,row, txt, fix, color=TFT.WHITE, xof=0, yof=0):
+	if fix > 1: fix = 1
+	fw = FW[fix]; fh = FH[fix]
+	tft.text((xof+col*fw, yof+row*fh), txt, color, FONTS[fix])
 
 #TFT(spi, aDC, aReset, aCS, aLED)
 class SGUI:
@@ -133,35 +135,40 @@ class SGUI:
 					# EDIT_VALS[name][pix]['edigit'] = EDIT_DEF[grp][pix]['defd']
  
 	#@micropython.native
-	def DrawParam(self, bix, pix, g, rof, col=-1, row=-1):
+	def DrawParam(self, bix, pix, g, rof, xof, yof):
 		(s, c, ei) = gformat(bix, pix, g)
 		pn = EDIT_DEF[g][pix]['name']
 
 		# print(f'{bix}/{pix}', end = ',' if bix<3 or pix<'5' else '\n')
 		color = tft.WHITE
-		if col<0 and PAGES[ACTIVE]['layout'] =='2x2':
-			col = (bix%2)*(CARWIDTH//2); 
-			row = (bix//2)*(CARHEIGHT//2)
+		col=0; row=0
+
+		#if col<0 and PAGES[ACTIVE]['layout'] =='2x2':
+		#	if ZOOM: col=0; row=0
+		#	else: col = (bix%2)*(CARWIDTH//2); row = (bix//2)*(CARHEIGHT//2)
+
+		if ZOOM: div = 1; fix = 1; fw = FW[1]; fh = FH[1]
+		else: 	 div = 2; fix = 0; fw = FW[0]; fh = FH[0]
 
 		if int(pix)==0:	
-			tft.fillrect((col*FW,row*FH),(PIXWIDTH//2,PIXHEIGHT//2), tft.BLACK)
-			if bix == FOCUS['block']:
+			tft.fillrect((xof+col*fw,yof+row*fh),(PIXWIDTH//div,PIXHEIGHT//div), tft.BLACK)
+			if not ZOOM and bix == FOCUS['block']:
 				color = tft.GREEN
-				tft.rect((col*FW,row*FH),(PIXWIDTH//2-2,PIXHEIGHT//2-1), color)
-			text(0.5 + col, 0.5 + row, f'{g}{bix+1}', color, True)    # print block name eg. ch1, settings...
+				tft.rect((xof+col*fw,yof+row*fh),(PIXWIDTH//div-2,PIXHEIGHT//div-1), color)
+			text(0.3+col//2, 0.3 + row//2, f'{g}{bix+1}', fix+1, color, xof, yof)    # print block name eg. ch1, settings...
 		if s:
 			row += rof
-			text(col+1, row, s, c)
+			text(col+1, row, s, fix, c, xof, yof)
 			if ei>=0: 
 				c ^= 0xFFFFFF
-				x = (col+1+ei) * FW
-				y = (row+1)*FH - 1
-				text(col+1+ei, row, s[ei], c)
+				x = xof + (col+1+ei) * fw
+				y = yof + (row+1)*fh - 1
+				text(col+1+ei, row, s[ei], fix, c, xof, yof)
 
 				if self.E2Mode == 'Param': 
-					tft.rect((col*FW + 2, row*FH - 1),(PIXWIDTH//2-6, FH + 2), c) 
+					tft.rect((xof+col*fw + 2, yof+row*fh - 1),(PIXWIDTH//div-6, fh + 1), tft.GRAY) 
 				else: 
-					tft.line((x,y),(x+FW,y),tft.RED)
+					tft.line((x,y),(x+fw,y),tft.RED)
 		
 		r = 0 if pn == 'sh' or pn == 'on' else 1
 		return r
@@ -169,19 +176,24 @@ class SGUI:
 	def DrawBlock(self, bix): 
 		gr = PAGES[ACTIVE]['blocks'][bix]
 		rof = 2
+		xof=0; yof=0
 		if PAGES[ACTIVE]['layout'] =='2x2':	
-			col = (bix%2)*(CARWIDTH//2); 
-			row = (bix//2)*(CARHEIGHT//2)
+			if not ZOOM:
+				xof = (bix%2) * (PIXWIDTH//2)
+				yof = (bix//2) * (PIXHEIGHT//2)
 
 		for pix in sorted(EDIT_DEF[gr]):
-			rof += self.DrawParam(bix, pix, gr, rof, col, row)
+			rof += self.DrawParam(bix, pix, gr, rof, xof, yof)
 
 	def ShowPage(self,pg):   # e.g. call: ShowPage('Top')
 		global ACTIVE, PAGE
 		ACTIVE = pg
 		PAGE = PAGES[pg]
 		if PAGE['layout'] =='2x2':
-			for i in range(4): self.DrawBlock(i)
+			if ZOOM: 
+				self.DrawBlock(FOCUS['block']) 
+			else: 
+				for i in range(4): self.DrawBlock(i)
 	
 	def ChangeSelPar(self, delta):
 		if delta == 0: return
@@ -197,16 +209,23 @@ class SGUI:
 		FOCUS['param'] = par_names[newix]
 		self.DrawBlock(FOCUS['block'])
 
+	def ChangeSelDigit(self, delta):
+		pass
+
 	def NextChannel(self):
 		prev = FOCUS['block']
 		nxt = (FOCUS['block'] + 1) % 4
 		FOCUS['block'] = nxt
-		self.DrawBlock(prev)
+		if not ZOOM: self.DrawBlock(prev)
 		self.DrawBlock(nxt)
 
 	def ExecKnobPress(self, knob, long = False):
+		global ZOOM
 		if long:
-			pass
+			if knob == 1:
+				ZOOM = not ZOOM
+				self.ShowPage(ACTIVE)
+			self.btn_wait0 = True
 		else:
 			if knob == 1:  # top nom / E1 
 				self.NextChannel()
@@ -215,7 +234,7 @@ class SGUI:
 					self.E2Mode = 'Digit'
 				else:  # 'Digit'
 					self.E2Mode = 'Param'
-				self.DrawBlock(FOCUS['block'])			
+				self.DrawBlock(FOCUS['block'])
 
 	def ProcessKnobs(self):
 		# new btns value 
@@ -239,8 +258,8 @@ class SGUI:
 		
 		e2 = self.enc[1].GetTurn()
 		if e2: 
-			if self.E2Mode == 'Param':
-				self.ChangeSelPar(e2)
+			if self.E2Mode == 'Param': self.ChangeSelPar(e2)
+			else: self.ChangeSelDigit(e2)
 		return False
 
 if __name__ == '__main__':
