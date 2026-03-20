@@ -20,15 +20,16 @@ CARHEIGHT	= PIXHEIGHT // FH[0]
 ROTATION	= 1
 LONG_BTN_MS	= 500
 
-# information for editing items. Note: defd =0 means first digit after decimal point
-EDIT_DEF =  {  # defaults: defv:0, defd:1, res:min, color: white
+# information for editing items. 
+# Note: defd is the equivalent power of 10 0 for unit digit, -1 for first decimal digit
+EDIT_DEF =  {  # defaults: defv:0, defd:0, res:min, color: white
 'Ch': {
 	'0': {'name':'on',   'type':'b','min':0,   'max':1,  'u':'',  'res' :1},
 	'1': {'name':'shape','type':'w','min':0,   'max':4,  'u':'',  'res' :1},
-	'2': {'name':'fr', 'type':'f','min':0.1, 'max':5e6,'u':'Hz','defd':3,  'color':TFT.BLUE,'defv':1000},
-	'3': {'name':'am', 'type':'f','min':1e-3,'max':10, 'u':'V' ,'defv':1,  'color':TFT.PURPLE},
-	'4': {'name':'of', 'type':'f','min':-10, 'max':10, 'u':'V' ,'defd':-2, 'res'  :0.1, 'color':TFT.ORANGE},
-	'5': {'name':'ph', 'type':'f','min':-180,'max':180,'u':'o', 'defd':1,  'res'  :0.1, 'color':TFT. GRAY}},
+	'2': {'name':'fr', 'type':'f','min':0.1, 'max':5e6,'u':'Hz', 'defd':2,  'color':TFT.BLUE,'defv':1000},
+	'3': {'name':'am', 'type':'f','min':1e-3,'max':10, 'u':'V' , 'defv':1,  'color':TFT.PURPLE},
+	'4': {'name':'of', 'type':'f','min':-10, 'max':10, 'u':'V' , 'defd':-3, 'res'  :0.1, 'color':TFT.ORANGE},
+	'5': {'name':'ph', 'type':'f','min':-180,'max':180,'u':'o',  'defd':1,  'res'  :0.1, 'color':TFT. GRAY}},
 'Cfg': {
 	'0':{'name':'Brightness', 'type':'f','min':0, 'max':100, 'u':'%', 'defv':75},
 	'1':{'name':'Volt Limit', 'type':'f','min':1, 'max':10,  'u':'V', 'defv':3,'res':0.1}}}	
@@ -40,24 +41,26 @@ PAGES = { 'Top':{'layout':'2x2', 'blocks':['Ch'] * 4 }}
 FOCUS  = {'page':'Top', 'block':0, 'pix': 2}  #'param':'fr', 
 ACTIVE = ''
 PAGE   = {}
-ZOOM = False
+ZOOM = True
 
 # returns (param name, string value including units, color
 # cofs = horizontal 1st character display offset, ei = index in string where focus is) 
 #@micropython.native
 def gformat(bix, pix, g):
-	# print(bix,pix,g)
-	pix = str(pix)
-	p = EDIT_DEF[g][pix]['name']
-	v = g + '_' + str(bix) # variable / value e.g. Ch_1
-	color = EDIT_DEF[g][pix]['color']
+	spix = str(pix)
+	pix=int(pix); bix = int(bix)
+	p = EDIT_DEF[g][spix]['name']
+	v = g + '_' + str(bix)               # variable / value e.g. Ch_1
+	color = EDIT_DEF[g][spix]['color']
 	
-	ei = -int(FOCUS[p])	if FOCUS['block'] == bix and FOCUS['pix'] == pix else None
+	# initial ei value relative to decimal point (changed later to offset in string)
+	ei = -int(FOCUS[p])-1 if FOCUS['block'] == bix and FOCUS['pix'] == pix else None
+	# print(p, FOCUS['block'], bix, FOCUS['pix'], pix, ei, FOCUS['block'] == bix, FOCUS['pix'] == pix, type(bix), type(pix) )
 
 	# print(v,p)
 	raw =EDIT_VALS[v][p] # ['value']
 	s=''; sh = 0
-	u = EDIT_DEF[g][pix]['u']
+	u = EDIT_DEF[g][spix]['u']
 	if u == 'Hz':
 		if raw>=1e6   	: s = f'{raw/1e6:7.3f}'; u='MHz'; sh = 6
 		elif raw>1000 	: s = f'{raw/1e3:7.3f}'; u='KHz'; sh = 3
@@ -68,14 +71,14 @@ def gformat(bix, pix, g):
 	elif u == 'o':
 		s = f'{p}: {raw:3.0f}'; sh = 0
 	
-	# adjust edit character offset from left of string
+	# adjust edit character index from left of string
 	if ei is None: 
-		ei = -1
+		ei = -1 # not focused param
 	else:
 		dp = s.find('.')
-		if dp<0: dp = len(s); s += '.' # add temp '.'
+		if dp<0: dp = len(s); s += '.' # add temp '.' as reference
 		ei = ei + dp + sh
-		if ei>=dp and s[dp].isdigit(): ei += 1
+		if ei>=dp: ei += 1
 		while not s[ei].isdigit() and ei>dp: 
 			ei -= 1
 			FOCUS[p] = str(int(FOCUS[p]) + 1)
@@ -108,7 +111,6 @@ class SGUI:
 		self.E2Mode = 'Param'  # vs 'Digit'
 
 		# add default params keys' EDIT_VALS (defv, res and defd)
-		print(FOCUS)
 		for grp in EDIT_DEF: 				# grp = 'Ch', 'cfg'...
 			for pix in EDIT_DEF[grp]:		# pix = '1', '2' ...
 				if not 'defv' in EDIT_DEF[grp][pix] : EDIT_DEF[grp][pix]['defv'] = 0
@@ -119,7 +121,7 @@ class SGUI:
 				if 'defd' in EDIT_DEF[grp][pix]: 
 					FOCUS[EDIT_DEF[grp][pix]['name']] = EDIT_DEF[grp][pix]['defd']
 				else:
-					FOCUS[EDIT_DEF[grp][pix]['name']] = '1'
+					FOCUS[EDIT_DEF[grp][pix]['name']] = 0
 
 		# create current EDIT_VALS for all parameters, and default focused digit/factor
 		for grp in EDIT_DEF:
@@ -139,8 +141,8 @@ class SGUI:
 	#@micropython.native
 	def DrawParam(self, bix, pix, g, rof = -1, xof = 0, yof = 0):
 		(s, c, ei) = gformat(bix, pix, g)
-		pix = str(pix)
-		pn = EDIT_DEF[g][pix]['name']
+		
+		pn = EDIT_DEF[g][str(pix)]['name']
 
 		# print(f'{bix}/{pix}', end = ',' if bix<3 or pix<'5' else '\n')
 		color = tft.WHITE
@@ -149,7 +151,7 @@ class SGUI:
 		if rof<0 and PAGES[ACTIVE]['layout'] =='2x2':
 			if not ZOOM: 
 				xof = (bix%2)*(PIXWIDTH//2); yof = (bix//2)*(PIXHEIGHT//2)
-			rof = 1 + int(pix)
+			rof = 0.5 + int(pix)
 
 		if ZOOM: div = 1; fix = 1; fw = FW[1]; fh = FH[1]
 		else: 	 div = 2; fix = 0; fw = FW[0]; fh = FH[0]
@@ -163,6 +165,7 @@ class SGUI:
 		if s:
 			row += rof
 			text(col+1, row, s, fix, c, xof, yof)
+			
 			if ei>=0: 
 				c ^= 0xFFFFFF
 				x = xof + (col+1+ei) * fw
@@ -179,7 +182,7 @@ class SGUI:
 
 	def DrawBlock(self, bix): 
 		gr = PAGES[ACTIVE]['blocks'][bix]
-		rof = 2
+		rof = 1.5
 		xof=0; yof=0
 		if PAGES[ACTIVE]['layout'] =='2x2':	
 			if not ZOOM:
@@ -212,7 +215,18 @@ class SGUI:
 		self.DrawBlock(FOCUS['block'])
 
 	def ChangeSelDigit(self, delta):
-		pass
+		db = EDIT_DEF['Ch'][str(FOCUS['pix'])]
+		d = FOCUS[db['name']] + delta
+
+		# limit digit according to parameter max/min values
+		min = db['min']
+		if min>0:
+			while 10**d < min and d<9: d += 1  # rule for positive only values e.g. amplitude
+		elif d<0: d = 0 # if pos neg values e.g. phase, min is 0 (10**0 = unit digit)
+
+		while 10**d > db['max'] and d>-3: d -= 1
+		FOCUS[db['name']] = d
+		self.DrawBlock(FOCUS['block'])
 
 	def NextChannel(self):
 		prev = FOCUS['block']
@@ -260,17 +274,17 @@ class SGUI:
 		
 		e = self.enc[0].GetTurn()
 		if e: # E1: value change
-			name = EDIT_DEF['Ch'][str(FOCUS['pix'])]['name']
+			db = EDIT_DEF['Ch'][str(FOCUS['pix'])]
+			name = db['name']
 			val = EDIT_VALS['Ch_'+ str(FOCUS['block'])][name] + e * 10**int(FOCUS[name])
-			val = min(EDIT_DEF['Ch'][str(FOCUS['pix'])]['max'], val)
-			val = max(EDIT_DEF['Ch'][str(FOCUS['pix'])]['min'], val)
-			EDIT_VALS['Ch_'+ str(FOCUS['block'])][name] = val
-			self.DrawParam(int(FOCUS['block']), int(FOCUS['pix']), 'Ch')
+			if db['min'] <= val <= db['max']:
+				EDIT_VALS['Ch_'+ str(FOCUS['block'])][name] = val
+				self.DrawParam(int(FOCUS['block']), int(FOCUS['pix']), 'Ch')
 
 		e = self.enc[1].GetTurn()
-		if e: 
+		if e: # E2, param change or digit change 
 			if self.E2Mode == 'Param': self.ChangeSelPar(e)
-			else: self.ChangeSelDigit(e)
+			else: self.ChangeSelDigit(-e)
 
 		return False
 
@@ -279,7 +293,7 @@ if __name__ == '__main__':
 
 	tst = SGUI()
 	# print(EDIT_VALS)
-	# print(FOCUS)
+	print(FOCUS)
 	tst.ShowPage('Top')
 
 	while True:	
