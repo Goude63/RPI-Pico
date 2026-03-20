@@ -10,7 +10,7 @@ import time
 #		Global module "Constants"		#
 #########################################
 # ttf setup
-FW = (f_sys["Width"] + 1, f_10x14["Width"] + 2) # the tft.text function adds 1 pixel between 5 pic characters 
+FW = (f_sys["Width"] + 1, f_10x14["Width"] + 1) # the tft.text function adds 1 pixel between 5 pic characters 
 FH = (f_sys["Height"] + 1, f_10x14["Height"] + 2)
 FONTS = (f_sys, f_10x14)  # second font must be double size of font1
 PIXWIDTH	= 160
@@ -28,7 +28,7 @@ EDIT_DEF =  {  # defaults: defv:0, defd:1, res:min, color: white
 	'2': {'name':'fr', 'type':'f','min':0.1, 'max':5e6,'u':'Hz','defd':3,  'color':TFT.BLUE,'defv':1000},
 	'3': {'name':'am', 'type':'f','min':1e-3,'max':10, 'u':'V' ,'defv':1,  'color':TFT.PURPLE},
 	'4': {'name':'of', 'type':'f','min':-10, 'max':10, 'u':'V' ,'defd':-2, 'res'  :0.1, 'color':TFT.ORANGE},
-	'5': {'name':'ph', 'type':'f','min':-180,'max':180,'u':'o', 'defd':2,  'res'  :0.1, 'color':TFT. GRAY}},
+	'5': {'name':'ph', 'type':'f','min':-180,'max':180,'u':'o', 'defd':1,  'res'  :0.1, 'color':TFT. GRAY}},
 'Cfg': {
 	'0':{'name':'Brightness', 'type':'f','min':0, 'max':100, 'u':'%', 'defv':75},
 	'1':{'name':'Volt Limit', 'type':'f','min':1, 'max':10,  'u':'V', 'defv':3,'res':0.1}}}	
@@ -37,7 +37,7 @@ EDIT_DEF =  {  # defaults: defv:0, defd:1, res:min, color: white
 EDIT_VALS = {}
 PAGES = { 'Top':{'layout':'2x2', 'blocks':['Ch'] * 4 }}
 # FOCUS / DIGIT info
-FOCUS  = {'block':0,'param':'fr'}
+FOCUS  = {'page':'Top', 'block':0, 'pix': 2}  #'param':'fr', 
 ACTIVE = ''
 PAGE   = {}
 ZOOM = False
@@ -46,14 +46,16 @@ ZOOM = False
 # cofs = horizontal 1st character display offset, ei = index in string where focus is) 
 #@micropython.native
 def gformat(bix, pix, g):
+	# print(bix,pix,g)
+	pix = str(pix)
 	p = EDIT_DEF[g][pix]['name']
-	v = g + '_' + str(bix) # variavle / value e.g. Ch_1
+	v = g + '_' + str(bix) # variable / value e.g. Ch_1
 	color = EDIT_DEF[g][pix]['color']
 	
-	ei = -int(FOCUS[p])	if FOCUS['block'] == bix and FOCUS['param'] == p else None
+	ei = -int(FOCUS[p])	if FOCUS['block'] == bix and FOCUS['pix'] == pix else None
 
 	# print(v,p)
-	raw =EDIT_VALS[v][p]['value']
+	raw =EDIT_VALS[v][p] # ['value']
 	s=''; sh = 0
 	u = EDIT_DEF[g][pix]['u']
 	if u == 'Hz':
@@ -131,21 +133,23 @@ class SGUI:
 				for pix in EDIT_DEF[grp]:
 					pn = EDIT_DEF[grp][pix]['name']
 					EDIT_VALS[name][pn] = {}
-					EDIT_VALS[name][pn]['value'] = EDIT_DEF[grp][pix]['defv']
+					EDIT_VALS[name][pn] = EDIT_DEF[grp][pix]['defv']
 					# EDIT_VALS[name][pix]['edigit'] = EDIT_DEF[grp][pix]['defd']
  
 	#@micropython.native
-	def DrawParam(self, bix, pix, g, rof, xof, yof):
+	def DrawParam(self, bix, pix, g, rof = -1, xof = 0, yof = 0):
 		(s, c, ei) = gformat(bix, pix, g)
+		pix = str(pix)
 		pn = EDIT_DEF[g][pix]['name']
 
 		# print(f'{bix}/{pix}', end = ',' if bix<3 or pix<'5' else '\n')
 		color = tft.WHITE
 		col=0; row=0
 
-		#if col<0 and PAGES[ACTIVE]['layout'] =='2x2':
-		#	if ZOOM: col=0; row=0
-		#	else: col = (bix%2)*(CARWIDTH//2); row = (bix//2)*(CARHEIGHT//2)
+		if rof<0 and PAGES[ACTIVE]['layout'] =='2x2':
+			if not ZOOM: 
+				xof = (bix%2)*(PIXWIDTH//2); yof = (bix//2)*(PIXHEIGHT//2)
+			rof = 1 + int(pix)
 
 		if ZOOM: div = 1; fix = 1; fw = FW[1]; fh = FH[1]
 		else: 	 div = 2; fix = 0; fw = FW[0]; fh = FH[0]
@@ -198,15 +202,13 @@ class SGUI:
 	def ChangeSelPar(self, delta):
 		if delta == 0: return
 
-		# find pix
-		par_names = []
-		gr = PAGE['blocks'][FOCUS['block']]
-		for pix in sorted(EDIT_DEF[gr]): par_names.append(EDIT_DEF[gr][pix]['name'])
-		newix = (par_names.index(FOCUS['param']) + delta) % len(par_names)
+		# TBD update to support config page too
+		newix = FOCUS['pix'] + delta
+		if   newix > len(EDIT_DEF['Ch']): newix = 0
+		elif newix < 0: newix = len(EDIT_DEF['Ch']) - 1
 
-		# apply delta clip to 0, max
-		newix = min(max(0, newix),len(par_names) - 1)
-		FOCUS['param'] = par_names[newix]
+		# TBD update to support config page too
+		FOCUS['pix'] = newix
 		self.DrawBlock(FOCUS['block'])
 
 	def ChangeSelDigit(self, delta):
@@ -256,22 +258,33 @@ class SGUI:
 			self.ExecKnobPress(self.btns)
 			self.btns = 0
 		
-		e2 = self.enc[1].GetTurn()
-		if e2: 
-			if self.E2Mode == 'Param': self.ChangeSelPar(e2)
-			else: self.ChangeSelDigit(e2)
+		e = self.enc[0].GetTurn()
+		if e: # E1: value change
+			name = EDIT_DEF['Ch'][str(FOCUS['pix'])]['name']
+			val = EDIT_VALS['Ch_'+ str(FOCUS['block'])][name] + e * 10**int(FOCUS[name])
+			val = min(EDIT_DEF['Ch'][str(FOCUS['pix'])]['max'], val)
+			val = max(EDIT_DEF['Ch'][str(FOCUS['pix'])]['min'], val)
+			EDIT_VALS['Ch_'+ str(FOCUS['block'])][name] = val
+			self.DrawParam(int(FOCUS['block']), int(FOCUS['pix']), 'Ch')
+
+		e = self.enc[1].GetTurn()
+		if e: 
+			if self.E2Mode == 'Param': self.ChangeSelPar(e)
+			else: self.ChangeSelDigit(e)
+
 		return False
 
 if __name__ == '__main__':
 	print('\33c',end='') # clear screen in most terminals
 
 	tst = SGUI()
+	# print(EDIT_VALS)
 	# print(FOCUS)
 	tst.ShowPage('Top')
 
 	while True:	
 		chng = tst.ProcessKnobs()
 		if chng: print(chng)
-		time.sleep(0.2)
+		time.sleep_ms(100)
 
 
