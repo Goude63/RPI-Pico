@@ -22,17 +22,17 @@ LONG_BTN_MS	= 500
 
 # information for editing items. 
 # Note: defd is the equivalent power of 10 0 for unit digit, -1 for first decimal digit
-EDIT_DEF =  {  # defaults: defv:0, defd:0, res:min, color: white
+EDIT_DEF =  {  # defaults: defv:0, defd:0, res:min (1 for type i), color: white
 'Ch': {
 	'0': {'name':'on',   'type':'b','min':0,   'max':1,  'u':'',  'res' :1},
 	'1': {'name':'shape','type':'w','min':0,   'max':4,  'u':'',  'res' :1},
-	'2': {'name':'fr', 'type':'f','min':0.1, 'max':5e6,'u':'Hz', 'defd':2,  'color':TFT.BLUE,'defv':1000},
-	'3': {'name':'am', 'type':'f','min':1e-3,'max':10, 'u':'V' , 'defv':1,  'color':TFT.PURPLE},
-	'4': {'name':'of', 'type':'f','min':-10, 'max':10, 'u':'V' , 'defd':-3, 'res'  :0.1, 'color':TFT.ORANGE},
-	'5': {'name':'ph', 'type':'f','min':-180,'max':180,'u':'o',  'defd':1,  'res'  :0.1, 'color':TFT. GRAY}},
+	'2': {'name':'fr', 'type':'f','min':0.1, 'max':5e6,  'u':'Hz','defd':2,  'color':TFT.BLUE,'defv':1000},
+	'3': {'name':'am', 'type':'f','min':1e-3,'max':10,   'u':'V', 'defv':1,  'color':TFT.PURPLE},
+	'4': {'name':'of', 'type':'f','min':-10, 'max':10,   'u':'V', 'defd':-3, 'res'  :1e-3, 'color':TFT.ORANGE},
+	'5': {'name':'ph', 'type':'i','min':-181,'max':180,  'u':'o', 'defd':1,  'color':TFT. GRAY}},
 'Cfg': {
-	'0':{'name':'Brightness', 'type':'f','min':0, 'max':100, 'u':'%', 'defv':75},
-	'1':{'name':'Volt Limit', 'type':'f','min':1, 'max':10,  'u':'V', 'defv':3,'res':0.1}}}	
+	'0':{'name':'Brightness', 'type':'i','min':0, 'max':100, 'u':'%', 'defv':75,},
+	'1':{'name':'Volt Limit', 'type':'f','min':1, 'max':10,  'u':'V', 'defv':3, 'res':0.1}}}	
 
 # Editable elements values, factor/digit, col, row, font size of current screen location
 EDIT_VALS = {}
@@ -45,7 +45,7 @@ ZOOM = True
 
 # returns (param name, string value including units, color
 # cofs = horizontal 1st character display offset, ei = index in string where focus is) 
-#@micropython.native
+@micropython.native
 def gformat(bix, pix, g):
 	spix = str(pix)
 	pix=int(pix); bix = int(bix)
@@ -76,13 +76,13 @@ def gformat(bix, pix, g):
 		ei = -1 # not focused param
 	else:
 		dp = s.find('.')
-		if dp<0: dp = len(s); s += '.' # add temp '.' as reference
+		add_dp = dp<0
+		if add_dp: 
+			dp = len(s); 
+			s += '.' # add temp '.' as reference
 		ei = ei + dp + sh
 		if ei>=dp: ei += 1
-		while not s[ei].isdigit() and ei>dp: 
-			ei -= 1
-			FOCUS[p] = str(int(FOCUS[p]) + 1)
-		if s[len(s)-1] == '.': s = s[:-1] # remove temp '.'
+		if add_dp: s = s[:-1] # remove temp '.'
 
 	return (f'{s} {u}', color, ei)
 
@@ -114,8 +114,11 @@ class SGUI:
 		for grp in EDIT_DEF: 				# grp = 'Ch', 'cfg'...
 			for pix in EDIT_DEF[grp]:		# pix = '1', '2' ...
 				if not 'defv' in EDIT_DEF[grp][pix] : EDIT_DEF[grp][pix]['defv'] = 0
-				if not 'res' in EDIT_DEF[grp][pix]  : EDIT_DEF[grp][pix]['res'] = EDIT_DEF[grp][pix]['min']
 				if not 'color' in EDIT_DEF[grp][pix]: EDIT_DEF[grp][pix]['color'] = TFT.WHITE
+
+				if not 'res' in EDIT_DEF[grp][pix]: 
+					t = EDIT_DEF[grp][pix]['type']
+					EDIT_DEF[grp][pix]['res'] = 1 if t=='i' else EDIT_DEF[grp][pix]['min'] 
 
 				# set focus digit for all parameter types
 				if 'defd' in EDIT_DEF[grp][pix]: 
@@ -175,7 +178,8 @@ class SGUI:
 				if self.E2Mode == 'Param': 
 					tft.rect((xof+col*fw + 2, yof+row*fh - 1),(PIXWIDTH//div-6, fh + 1), tft.GRAY) 
 				else: 
-					tft.line((x,y),(x+fw,y),tft.RED)
+					tft.line((xof+fw,y),(xof+PIXWIDTH//div-fw, y),tft.BLACK)  # in erase previous digit underscore
+					tft.line((x,y),(x+fw,y),tft.RED) # draw underscore
 		
 		r = 0 if pn == 'sh' or pn == 'on' else 1
 		return r
@@ -219,12 +223,9 @@ class SGUI:
 		d = FOCUS[db['name']] + delta
 
 		# limit digit according to parameter max/min values
-		min = db['min']
-		if min>0:
-			while 10**d < min and d<9: d += 1  # rule for positive only values e.g. amplitude
-		elif d<0: d = 0 # if pos neg values e.g. phase, min is 0 (10**0 = unit digit)
-
-		while 10**d > db['max'] and d>-3: d -= 1
+		res = db['res']
+		while 10**d < res and d<9: d += 1 
+		while 10**d >= db['max'] and d>-3: d -= 1
 		FOCUS[db['name']] = d
 		self.DrawBlock(FOCUS['block'])
 
@@ -273,13 +274,24 @@ class SGUI:
 			self.btns = 0
 		
 		e = self.enc[0].GetTurn()
-		if e: # E1: value change
-			db = EDIT_DEF['Ch'][str(FOCUS['pix'])]
-			name = db['name']
-			val = EDIT_VALS['Ch_'+ str(FOCUS['block'])][name] + e * 10**int(FOCUS[name])
-			if db['min'] <= val <= db['max']:
-				EDIT_VALS['Ch_'+ str(FOCUS['block'])][name] = val
-				self.DrawParam(int(FOCUS['block']), int(FOCUS['pix']), 'Ch')
+
+		if e: # E1: value change if turning knob fast, |e| can be > 1
+			while True: # using break to exit
+				db = EDIT_DEF['Ch'][str(FOCUS['pix'])]
+				name = db['name']
+				val = EDIT_VALS['Ch_'+ str(FOCUS['block'])][name] + e * 10**int(FOCUS[name])
+
+				# if the current digit/factor makes overshoot min/max: try with small e 
+				# when e down to zero, if still overshooting: reduce digit/factor 
+				if db['min']*.99999 <= val <= db['max']*1.000001:  # compensate for single limitation
+					EDIT_VALS['Ch_'+ str(FOCUS['block'])][name] = val
+					self.DrawParam(int(FOCUS['block']), int(FOCUS['pix']), 'Ch')
+					break
+				elif e>1: 
+					e -= 1
+				else:
+					self.ChangeSelDigit(-1)
+					break
 
 		e = self.enc[1].GetTurn()
 		if e: # E2, param change or digit change 
