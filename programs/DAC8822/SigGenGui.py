@@ -26,14 +26,14 @@ LONG_BTN_MS	= 500
 # Note: defd is the equivalent power of 10 0 for unit digit, -1 for first decimal digit
 EDIT_DEF =  {  # defaults: defv:0, defd:0, res:min (1 for type i), color: white
 'Ch': {
-	'0': {'name':'on',   'type':'b','min':0,   'max':1,  'u':'',  'res' :1},
-	'1': {'name':'shape','type':'w','min':0,   'max':4,  'u':'',  'res' :1},
-	'2': {'name':'Fr', 'type':'f','min':0.1, 'max':5e6,  'u':'Hz','defd':2,  'color':TFT.BLUE,'defv':1000},
-	'3': {'name':'Am', 'type':'f','min':1e-3,'max':10,   'u':'V', 'defv':1,  'color':TFT.PURPLE},
-	'4': {'name':'Of', 'type':'f','min':-10, 'max':10,   'u':'V', 'defd':-3, 'res'  :1e-3, 'color':TFT.ORANGE},
-	'5': {'name':'Ph', 'type':'i','min':-181,'max':180,  'u':'o', 'defd':1,  'color':TFT. GRAY}},
+	'0': {'name':'on', 'type':'b','min':0,   'max':1,  'u':'',  'res' :1},
+	'1': {'name':'sh', 'type':'w','min':0,   'max':4,  'u':'',  'res' :1},
+	'2': {'name':'Fr', 'type':'f','min':0.1, 'max':5e6,'u':'Hz','defd':2,  'color':TFT.BLUE,'defv':1000},
+	'3': {'name':'Am', 'type':'f','min':1e-3,'max':10, 'u':'V', 'defv':1,  'color':TFT.PURPLE},
+	'4': {'name':'Of', 'type':'f','min':-10, 'max':10, 'u':'V', 'defd':-3, 'res'  :1e-3, 'color':TFT.ORANGE},
+	'5': {'name':'Ph', 'type':'i','min':-181,'max':180,'u':'o', 'defd':1,  'color':TFT. GRAY}},
 'Cfg': {
-	'0':{'name':'Brightness', 'type':'i','min':0, 'max':100, 'u':'%', 'defv':75,},
+	'0':{'name':'Brightness', 'type':'i','min':0, 'max':100, 'u':'%', 'defv':75},
 	'1':{'name':'Volt Limit', 'type':'f','min':1, 'max':10,  'u':'V', 'defv':3, 'res':0.1}}}	
 
 # Editable elements values, factor/digit, col, row, font size of current screen location
@@ -62,7 +62,6 @@ def gformat(bix, pix, g):
 	ei = -int(FOCUS[p])-1 if FOCUS['block'] == bix and FOCUS['pix'] == pix else None
 	# print(p, FOCUS['block'], bix, FOCUS['pix'], pix, ei, FOCUS['block'] == bix, FOCUS['pix'] == pix, type(bix), type(pix) )
 
-	# print(v,p)
 	raw =EDIT_VALS[v][p] # ['value']
 	s=''; sh = 0
 	u = EDIT_DEF[g][spix]['u']
@@ -74,12 +73,13 @@ def gformat(bix, pix, g):
 		elif raw>1000 	: s = f'{raw/1e3:7.3f}'; u='KHz'; sh = 3
 		else			: s = f'{raw:7.1f}';     u=' Hz'; sh = 0
 	elif u == 'V':
-		if raw<0.1	: s = f'{raw*1000:3.0f}'; u=' mV'; sh = -3 
+		if abs(raw)<0.1	: s = f'{raw*1000:3.0f}'; u=' mV'; sh = -3 
 		else		: s = f'{raw:5.3f}'; sh = 0
 	elif u == 'o':
 		s = f'{raw:3.0f}'; sh = 0
 	
 	# adjust edit character index from left of string
+	# ei is 'edit index': index of digit == adjust factor in 's' string
 	if ei is None: 
 		ei = -1 # not focused param
 	else:
@@ -157,27 +157,26 @@ class SGUI:
 		
 		pn = EDIT_DEF[g][str(pix)]['name']
 
-		# print(f'{bix}/{pix}', end = ',' if bix<3 or pix<'5' else '\n')
 		color = tft.WHITE
 		col=0; row=0
-		layout = PAGES[ACTIVE]['layout']
+		l2x2 = PAGES[ACTIVE]['layout'] == '2x2'
 
 		if rof<0:
-			if layout =='2x2':
+			if l2x2:
 				if not ZOOM: 
 					xof = (bix%2)*(PIXWIDTH//2); yof = (bix//2)*(PIXHEIGHT//2)
-				rof = 0.5 + int(pix)
+				rof = int(pix)
 			else:
-				rof = 2 + int(pix)
+				rof = 1 + 2*int(pix)
 
-		if ZOOM or layout =='1': 
+		if ZOOM or not l2x2: 
 			div = 1; fix = 1; fw = FW[1]; fh = FH[1]
 		else:
 			div = 2; fix = 0; fw = FW[0]; fh = FH[0]
 
 		if int(pix)==0:	
 			tft.fillrect((xof+col*fw,yof+row*fh),(PIXWIDTH//div,PIXHEIGHT//div), tft.BLACK)
-			if layout == '2x2':
+			if l2x2:
 				if not ZOOM and bix == FOCUS['block']:
 					color = tft.GREEN
 					tft.rect((xof+col*fw,yof+row*fh),(PIXWIDTH//div-2,PIXHEIGHT//div-1), color)
@@ -185,9 +184,15 @@ class SGUI:
 				text(0.3+col//2, 0.3 + row//2, f'{g}{bix+1}', fix+1, color, xof, yof)    
 		if s:
 			row += rof
-			if layout =='2x2':
-				s = f'{h}{s}'
-				text(col+1, row, s, fix, c, xof, yof)			
+			if l2x2:
+				s = f'{h}{s}'; 
+				if ei>=0: ei += len(h)
+				text(col+1, row, s, fix, c, xof, yof)
+			else:
+				text(col+1, row, h, fix, c, xof, yof)
+				row += 1
+				text(col+1, row, s, fix, c, xof, yof)
+
 			if ei>=0: 
 				c ^= 0xFFFFFF
 				x = xof + (col+1+ei) * fw
@@ -200,8 +205,10 @@ class SGUI:
 					tft.line((xof+fw,y),(xof+PIXWIDTH//div-fw, y),tft.BLACK)  # in erase previous digit underscore
 					tft.line((x,y),(x+fw,y),tft.RED) # draw underscore
 		
-		if layout == '1': r = 2
-		else: r = 0 if pn == 'sh' or pn == 'on' else 1
+		if not l2x2:
+			r = 2
+		else: 
+			r = 0 if pn == 'sh' or pn == 'on' else 1
 		return r
 
 	def DrawBlock(self, bix): 
@@ -209,7 +216,7 @@ class SGUI:
 		
 		xof=0; yof=0
 		if PAGES[ACTIVE]['layout'] =='2x2':	
-			rof = 1.5 
+			rof = 2 
 			if not ZOOM:
 				xof = (bix%2) * (PIXWIDTH//2)
 				yof = (bix//2) * (PIXHEIGHT//2)
@@ -239,18 +246,23 @@ class SGUI:
 			
 	def ChangeSelPar(self, delta):
 		if delta == 0: return
+		delta = 1 if delta>0 else -1
+		gr = PAGES[ACTIVE]['blocks'][FOCUS['block']]
 
 		# TBD update to support config page too
 		newix = FOCUS['pix'] + delta
-		if   newix > len(EDIT_DEF['Ch']): newix = 0
-		elif newix < 0: newix = len(EDIT_DEF['Ch']) - 1
+		if   newix > len(EDIT_DEF[gr]): newix = 0
+		elif newix < 0: newix = len(EDIT_DEF[gr]) - 1
 
 		# TBD update to support config page too
 		FOCUS['pix'] = newix
 		self.DrawBlock(FOCUS['block'])
 
 	def ChangeSelDigit(self, delta):
-		db = EDIT_DEF['Ch'][str(FOCUS['pix'])]
+		if delta == 0: return
+		delta = 1 if delta>0 else -1		
+		gr = PAGES[ACTIVE]['blocks'][FOCUS['block']]
+		db = EDIT_DEF[gr][str(FOCUS['pix'])]
 		d0 = FOCUS[db['name']] 
 		d =d0 + delta
 
@@ -259,7 +271,6 @@ class SGUI:
 		while 10**d < res and d<9: d += 1 
 		while 10**d >= db['max'] and d>-3: d -= 1
 
-		print(d0,d)
 		if d != d0:
 			FOCUS[db['name']] = d
 			self.DrawBlock(FOCUS['block'])
@@ -294,7 +305,6 @@ class SGUI:
 	def ProcessKnobs(self):
 		# new btns value 
 		btns = self.enc[0].Btn() + (self.enc[1].Btn() << 1)
-		# if btns: print(btns, end = ' ' )
 
 		# check knob press
 		if self.btn_wait0:
@@ -324,7 +334,6 @@ class SGUI:
 				# when e down to zero, if still overshooting: reduce digit/factor 
 				if db['min']*.99999 <= val <= db['max']*1.000001:  # compensate for single limitation
 					EDIT_VALS[gr+'_'+ str(FOCUS['block'])][name] = val
-					print(val)
 					self.DrawParam(int(FOCUS['block']), int(FOCUS['pix']), gr)
 					break
 				elif e>1: 
@@ -346,8 +355,9 @@ if __name__ == '__main__':
 	tst = SGUI()
 	#print(EDIT_VALS,'\n')
 	#print(EDIT_DEF)
-	#print(FOCUS)
-	tst.ShowPage('Top')
+	#print(FOCUS,'\n',ACTIVE)
+	
+	tst.ShowPage('Cfg')
 
 	while True:	
 		chng = tst.ProcessKnobs()
