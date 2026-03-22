@@ -23,17 +23,20 @@ LONG_BTN_MS	= 500
 # information for editing items. 
 # type: b = boolean, w = wave shape, i,f = integer float
 #    u: unit, defd = default digit/multiplicator, defv = def value
-# Note: defd is the equivalent power of 10 0 for unit digit, -1 for first decimal digit
-EDIT_DEF =  {  # defaults: defv:0, defd:0, res:min (1 for type i), color: white
+# Note: defd is the equivalent power of 10 for unit digit, -1 for first decimal digit
+# shape: 0: sine, 1: square, 2: triangular, 3: sawtooth hard ledt, 4: sawtooth hard right, >=5 arbitrary
+# for arbitrary, a file name arb_n.u16 must exist on local file system
+EDIT_DEF =  {  # defaults: defv:0, defd:0, res:min (1 for type i), color: green
 'Ch': {
 	'0': {'name':'on', 'type':'b','min':0,   'max':1,  'u':'',  'res' :1},
 	'1': {'name':'sh', 'type':'w','min':0,   'max':4,  'u':'',  'res' :1},
 	'2': {'name':'Fr', 'type':'f','min':0.1, 'max':5e6,'u':'Hz','defd':2,  'color':TFT.BLUE,'defv':1000},
 	'3': {'name':'Am', 'type':'f','min':1e-3,'max':10, 'u':'V', 'defv':1,  'color':TFT.PURPLE},
 	'4': {'name':'Of', 'type':'f','min':-10, 'max':10, 'u':'V', 'defd':-3, 'res'  :1e-3, 'color':TFT.ORANGE},
-	'5': {'name':'Ph', 'type':'i','min':-181,'max':180,'u':'o', 'defd':1,  'color':TFT. GRAY}},
+	'5': {'name':'Ph', 'type':'i','min':-181,'max':180,'u':'o', 'defd':1,  'color':TFT.GRAY},
+	'6': {'name':'Dt', 'type':'f','min':0,'max':100,   'u':'%', 'defd':1, 'res':0.1, 'color':TFT.CYAN}},
 'Cfg': {
-	'0':{'name':'Brightness', 'type':'i','min':0, 'max':100, 'u':'%', 'defv':75},
+	'0':{'name':'Brightness', 'type':'i','min':10,'max':100, 'u':'%', 'defd':1, 'defv':80,'res':10},
 	'1':{'name':'Volt Limit', 'type':'f','min':1, 'max':10,  'u':'V', 'defv':3, 'res':0.1}}}	
 
 # Editable elements values, factor/digit, col, row, font size of current screen location
@@ -64,7 +67,8 @@ def gformat(bix, pix, g):
 
 	raw =EDIT_VALS[v][p] # ['value']
 	s=''; sh = 0
-	u = EDIT_DEF[g][spix]['u']
+	db = EDIT_DEF[g][spix] 
+	u = db['u']
 	
 	p = p+':'
 	if u == 'Hz':
@@ -73,10 +77,14 @@ def gformat(bix, pix, g):
 		elif raw>1000 	: s = f'{raw/1e3:7.3f}'; u='KHz'; sh = 3
 		else			: s = f'{raw:7.1f}';     u=' Hz'; sh = 0
 	elif u == 'V':
-		if abs(raw)<0.1	: s = f'{raw*1000:3.0f}'; u=' mV'; sh = -3 
-		else		: s = f'{raw:5.3f}'; sh = 0
+		if abs(raw)>0.5 or abs(raw) <1e-5:	s = f'{raw:6.3f}'; sh = 0
+		else:	s = f'{raw*1000:4.0f}'; u=' mV'; sh = -3 
 	elif u == 'o':
 		s = f'{raw:3.0f}'; sh = 0
+	elif u=='%':
+		sh = 0
+		if db['res'] == 1: s = f'{raw:3.0f}'
+		else: s = f'{raw:5.1f}'
 	
 	# adjust edit character index from left of string
 	# ei is 'edit index': index of digit == adjust factor in 's' string
@@ -125,7 +133,7 @@ class SGUI:
 		for grp in EDIT_DEF: 				# grp = 'Ch', 'cfg'...
 			for pix in EDIT_DEF[grp]:		# pix = '1', '2' ...
 				if not 'defv' in EDIT_DEF[grp][pix] : EDIT_DEF[grp][pix]['defv'] = 0
-				if not 'color' in EDIT_DEF[grp][pix]: EDIT_DEF[grp][pix]['color'] = TFT.WHITE
+				if not 'color' in EDIT_DEF[grp][pix]: EDIT_DEF[grp][pix]['color'] = TFT.GREEN
 
 				if not 'res' in EDIT_DEF[grp][pix]: 
 					t = EDIT_DEF[grp][pix]['type']
@@ -151,80 +159,81 @@ class SGUI:
 					EDIT_VALS[name][pn] = {}
 					EDIT_VALS[name][pn] = EDIT_DEF[grp][pix]['defv']
  
-	#@micropython.native
-	def DrawParam(self, bix, pix, g, rof = -1.0, xof = 0, yof = 0):
-		(h, s, c, ei) = gformat(bix, pix, g)
-		
+	# @micropython.native
+	def DrawParam(self, bix, pix, g):
 		pn = EDIT_DEF[g][str(pix)]['name']
+
+		# skip dusy cycle for non square wave shape		
+		if pn=='Dt' and EDIT_VALS['Ch_'+ str(bix)]['sh']!=1: return
+
+		if pn in ['sh','on']:
+			(h, s, c, ei) = ('','',0,-1)
+		else:
+			(h, s, c, ei) = gformat(bix, pix, g)
 
 		color = tft.WHITE
 		col=0; row=0
 		l2x2 = PAGES[ACTIVE]['layout'] == '2x2'
 
-		if rof<0:
-			if l2x2:
-				if not ZOOM: 
-					xof = (bix%2)*(PIXWIDTH//2); yof = (bix//2)*(PIXHEIGHT//2)
-				rof = int(pix)
-			else:
-				rof = 1 + 2*int(pix)
+		xof = 0; yof = 0
+		if l2x2:
+			if not ZOOM: 
+				xof = (bix%2)*(PIXWIDTH//2); yof = (bix//2)*(PIXHEIGHT//2)
+			rof = int(pix)
+		else:
+			rof = 1 + 3*int(pix)
 
 		if ZOOM or not l2x2: 
-			div = 1; fix = 1; fw = FW[1]; fh = FH[1]
+			w = PIXWIDTH
+			fix = 1; fw = FW[1]; fh = FH[1]
 		else:
-			div = 2; fix = 0; fw = FW[0]; fh = FH[0]
+			w = PIXWIDTH//2
+			fix = 0; fw = FW[0]; fh = FH[0]
 
-		if int(pix)==0:	
-			tft.fillrect((xof+col*fw,yof+row*fh),(PIXWIDTH//div,PIXHEIGHT//div), tft.BLACK)
-			if l2x2:
-				if not ZOOM and bix == FOCUS['block']:
-					color = tft.GREEN
-					tft.rect((xof+col*fw,yof+row*fh),(PIXWIDTH//div-2,PIXHEIGHT//div-1), color)
-				# print block name eg. ch1, settings...
-				text(0.3+col//2, 0.3 + row//2, f'{g}{bix+1}', fix+1, color, xof, yof)    
-		if s:
+		if pn in ['sh', 'on'] :
+			pass
+		else:			
 			row += rof
 			if l2x2:
 				s = f'{h}{s}'; 
 				if ei>=0: ei += len(h)
 				text(col+1, row, s, fix, c, xof, yof)
 			else:
-				text(col+1, row, h, fix, c, xof, yof)
-				row += 1
+				text(col+1, row, h, fix, tft.WHITE, xof, yof)
+				row += 1; col += 2
 				text(col+1, row, s, fix, c, xof, yof)
 
 			if ei>=0: 
 				c ^= 0xFFFFFF
 				x = xof + (col+1+ei) * fw
-				y = yof + (row+1)*fh - 1
+				y = yof + (row+1)*fh - 1				
 				text(col+1+ei, row, s[ei], fix, c, xof, yof)
 
 				if self.E2Mode == 'Param': 
-					tft.rect((xof+col*fw + 2, yof+row*fh - 1),(PIXWIDTH//div-6, fh + 1), tft.GRAY) 
+					w -= col*fw   # prevent box overflow to the right
+					tft.rect((xof+col*fw + 2, yof+row*fh - 1),(w-6, fh + 1), tft.GRAY) 
 				else: 
-					tft.line((xof+fw,y),(xof+PIXWIDTH//div-fw, y),tft.BLACK)  # in erase previous digit underscore
-					tft.line((x,y),(x+fw,y),tft.RED) # draw underscore
-		
-		if not l2x2:
-			r = 2
-		else: 
-			r = 0 if pn == 'sh' or pn == 'on' else 1
-		return r
+					tft.line((xof+fw,y),(xof+w-fw, y),tft.BLACK)  # in erase previous digit underscore
+					tft.line((x,y),(x+fw,y),tft.RED) # draw underscore	
 
+	@micropython.native
 	def DrawBlock(self, bix): 
 		gr = PAGES[ACTIVE]['blocks'][bix]
-		
-		xof=0; yof=0
-		if PAGES[ACTIVE]['layout'] =='2x2':	
-			rof = 2 
-			if not ZOOM:
-				xof = (bix%2) * (PIXWIDTH//2)
-				yof = (bix//2) * (PIXHEIGHT//2)
+
+		if ZOOM or gr == 'Cfg':
+			tft.fill()
+			if gr == 'Ch':
+				text(0.3, 0.3, f'{gr}{bix+1}', 1, tft.WHITE)
 		else:
-			rof = 2
+			w = PIXWIDTH//2; h=PIXHEIGHT//2
+			x = (bix%2) * w; y = (bix//2) * h
+			tft.fillrect((x,y), (w, h), tft.BLACK)
+			if bix==FOCUS['block'] and gr=='Ch':
+				tft.rect((x,y),(w-1,h), tft.GREEN)
+			text(0.3, 0.3, f'{gr}{bix+1}',0, tft.WHITE, x, y)
 
 		for pix in sorted(EDIT_DEF[gr]):
-			rof += self.DrawParam(bix, pix, gr, rof, xof, yof)
+			self.DrawParam(bix, pix, gr)
 
 	def ShowPage(self, pg):   # e.g. call: ShowPage('Top')
 		global ACTIVE, PAGE
@@ -251,8 +260,13 @@ class SGUI:
 
 		# TBD update to support config page too
 		newix = FOCUS['pix'] + delta
-		if   newix > len(EDIT_DEF[gr]): newix = 0
-		elif newix < 0: newix = len(EDIT_DEF[gr]) - 1
+
+		# handle case for duty cycle only for square wave shape 
+		l = len(EDIT_DEF[gr])
+		if gr=='Ch' and EDIT_VALS['Ch_'+ str(FOCUS['block'])]['sh']!=1: l -= 1
+
+		if   newix >= l: newix = 0
+		elif newix < 0: newix = l - 1
 
 		# TBD update to support config page too
 		FOCUS['pix'] = newix
@@ -302,6 +316,37 @@ class SGUI:
 					self.E2Mode = 'Param'
 				self.DrawBlock(FOCUS['block'])
 
+	def ChangeValue(self, e):
+		bix = int(FOCUS['block'])
+		gr = PAGES[ACTIVE]['blocks'][bix]
+		db = EDIT_DEF[gr][str(FOCUS['pix'])]
+		name = db['name']
+		if name in ['on','sh']: e = 1 if e>0 else -1
+		
+		v0 = EDIT_VALS[gr+'_'+ str(bix)][name] 
+		val = v0 + e * 10**int(FOCUS[name])
+
+		while True: # using break to exit
+			# if the current digit/factor makes overshoot min/max: try with small e 
+			# when e down to zero, if still overshooting: reduce digit/factor 
+			if db['min']*.9999 <= val <= db['max']*1.0001:  # compensate for single limitation
+				EDIT_VALS[gr+'_'+ str(bix)][name] = val
+				self.DrawParam(bix, int(FOCUS['pix']), gr)
+				break
+			elif e>1: e -= 1
+			else: 
+				if db['type'] in ['f','i']: self.ChangeSelDigit(-1); 
+				break
+
+		# TBD add callback to update sig gen with changed param
+		print(val, v0)
+		if val != v0:
+			if name=='Brightness': tft.led(val)
+			if name=='sh':	
+				# if shape was or becomes square, redraw page to add remove Duty Cycle as needed
+				if round(v0)==1 or round(val)==1: 
+					self.DrawBlock(bix)
+
 	def ProcessKnobs(self):
 		# new btns value 
 		btns = self.enc[0].Btn() + (self.enc[1].Btn() << 1)
@@ -324,23 +369,7 @@ class SGUI:
 		e = self.enc[0].GetTurn()
 
 		if e: # E1: value change if turning knob fast, |e| can be > 1
-			gr = PAGES[ACTIVE]['blocks'][FOCUS['block']]
-			while True: # using break to exit
-				db = EDIT_DEF[gr][str(FOCUS['pix'])]
-				name = db['name']
-				val = EDIT_VALS[gr+'_'+ str(FOCUS['block'])][name] + e * 10**int(FOCUS[name])
-
-				# if the current digit/factor makes overshoot min/max: try with small e 
-				# when e down to zero, if still overshooting: reduce digit/factor 
-				if db['min']*.99999 <= val <= db['max']*1.000001:  # compensate for single limitation
-					EDIT_VALS[gr+'_'+ str(FOCUS['block'])][name] = val
-					self.DrawParam(int(FOCUS['block']), int(FOCUS['pix']), gr)
-					break
-				elif e>1: 
-					e -= 1
-				else:
-					self.ChangeSelDigit(-1)
-					break
+			self.ChangeValue(e)
 
 		e = self.enc[1].GetTurn()
 		if e: # E2, param change or digit change 
@@ -353,15 +382,13 @@ if __name__ == '__main__':
 	print('\33c',end='') # clear screen in most terminals
 
 	tst = SGUI()
-	#print(EDIT_VALS,'\n')
+	print(EDIT_VALS,'\n')
 	#print(EDIT_DEF)
 	#print(FOCUS,'\n',ACTIVE)
 	
-	tst.ShowPage('Cfg')
+	tst.ShowPage('Top')
 
 	while True:	
 		chng = tst.ProcessKnobs()
 		if chng: print(chng)
 		time.sleep_ms(100)
-
-
