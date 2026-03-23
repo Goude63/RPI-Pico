@@ -49,11 +49,11 @@ PAGES = {
 FOCUS  = {'block':0, 'pix': 2}  #'param':'fr', 
 ACTIVE = ''
 PAGE   = {}
-ZOOM = True
+ZOOM = False
 
 # returns (param name, string value including units, color
 # cofs = horizontal 1st character display offset, ei = index in string where focus is) 
-# @micropython.native
+@micropython.native
 def gformat(bix, pix, g):
 	spix = str(pix)
 	pix=int(pix); bix = int(bix)
@@ -90,6 +90,8 @@ def gformat(bix, pix, g):
 	# ei is 'edit index': index of digit == adjust factor in 's' string
 	if ei is None: 
 		ei = -1 # not focused param
+	elif p in ['sh:', 'on:']:
+		ei=1
 	else:
 		dp = s.find('.')
 		add_dp = dp<0
@@ -159,17 +161,31 @@ class SGUI:
 					EDIT_VALS[name][pn] = {}
 					EDIT_VALS[name][pn] = EDIT_DEF[grp][pix]['defv']
  
-	# @micropython.native
+	# draw on/off led and shape icon, including grey focus rectangle
+	def DrawIcon(self, pn, bix, xof, yof, ei):
+		if pn=='on':
+			on = EDIT_VALS['Ch_'+ str(bix)]['on']
+			r = (FW[1] if ZOOM else FW[0]) * 7 // 10	
+			x = xof+r*7
+			y = yof + r*2.2
+			if on: 
+				tft.fillcircle((x, y), r, tft.GREEN)
+			else:
+				tft.fillcircle((x, y), r, tft.BLACK)
+				tft.circle((x, y), r, tft.WHITE)
+			if ei >= 0:
+				d = r * 1.3
+				tft.rect((x-d, y-d),(2.2*d, 2*d), tft.GRAY)
+		else:
+			pass
+
+	@micropython.native
 	def DrawParam(self, bix, pix, g):
 		pn = EDIT_DEF[g][str(pix)]['name']
 
 		# skip dusy cycle for non square wave shape		
 		if pn=='Dt' and EDIT_VALS['Ch_'+ str(bix)]['sh']!=1: return
-
-		if pn in ['sh','on']:
-			(h, s, c, ei) = ('','',0,-1)
-		else:
-			(h, s, c, ei) = gformat(bix, pix, g)
+		(h, s, c, ei) = gformat(bix, pix, g)
 
 		color = tft.WHITE
 		col=0; row=0
@@ -191,7 +207,7 @@ class SGUI:
 			fix = 0; fw = FW[0]; fh = FH[0]
 
 		if pn in ['sh', 'on'] :
-			pass
+			self.DrawIcon(pn, bix, xof, yof, ei)
 		else:			
 			row += rof
 			if l2x2:
@@ -223,34 +239,36 @@ class SGUI:
 		if ZOOM or gr == 'Cfg':
 			tft.fill()
 			if gr == 'Ch':
-				text(0.3, 0.3, f'{gr}{bix+1}', 1, tft.WHITE)
+				text(0.6, 0.6, f'{gr}{bix+1}', 1, tft.WHITE)
 		else:
 			w = PIXWIDTH//2; h=PIXHEIGHT//2
 			x = (bix%2) * w; y = (bix//2) * h
 			tft.fillrect((x,y), (w, h), tft.BLACK)
 			if bix==FOCUS['block'] and gr=='Ch':
 				tft.rect((x,y),(w-1,h), tft.GREEN)
-			text(0.3, 0.3, f'{gr}{bix+1}',0, tft.WHITE, x, y)
+			text(0.6, 0.6, f'{gr}{bix+1}',0, tft.WHITE, x, y)
 
 		for pix in sorted(EDIT_DEF[gr]):
 			self.DrawParam(bix, pix, gr)
 
-	def ShowPage(self, pg):   # e.g. call: ShowPage('Top')
+	def ShowPage(self, pg, ForZoom = False):   # e.g. call: ShowPage('Top')
 		global ACTIVE, PAGE
 		ACTIVE = pg
 		PAGE = PAGES[pg]
 		if PAGE['layout'] =='2x2':
-			FOCUS['block'] = self.savebix
-			FOCUS['pix'] = self.savepix
+			if not ForZoom:
+				FOCUS['block'] = self.savebix
+				FOCUS['pix'] = self.savepix
 			if ZOOM: 
 				self.DrawBlock(FOCUS['block']) 
 			else: 
 				for i in range(4): self.DrawBlock(i)
 		else: 
-			self.savebix = FOCUS['block']
-			self.savepix = FOCUS['pix']
-			FOCUS['block'] = 0
-			FOCUS['pix'] = 0
+			if not ForZoom:
+				self.savebix = FOCUS['block']
+				self.savepix = FOCUS['pix']
+				FOCUS['block'] = 0
+				FOCUS['pix'] = 0
 			self.DrawBlock(0) # Cfh page has just one block
 			
 	def ChangeSelPar(self, delta):
@@ -302,8 +320,8 @@ class SGUI:
 			self.btn_wait0 = True
 			if knob == 1 and ACTIVE=='Top': # no zoom on cfg page
 				ZOOM = not ZOOM
-				self.ShowPage(ACTIVE)
-			elif knob == 3:
+				self.ShowPage(ACTIVE, True)
+			elif knob == 2:
 				np = {'Top':'Cfg','Cfg':'Top'}[ACTIVE]
 				self.ShowPage(np) # toggle
 		else:
@@ -316,31 +334,37 @@ class SGUI:
 					self.E2Mode = 'Param'
 				self.DrawBlock(FOCUS['block'])
 
+	@micropython.native
 	def ChangeValue(self, e):
 		bix = int(FOCUS['block'])
 		gr = PAGES[ACTIVE]['blocks'][bix]
 		db = EDIT_DEF[gr][str(FOCUS['pix'])]
 		name = db['name']
 		if name in ['on','sh']: e = 1 if e>0 else -1
-		
-		v0 = EDIT_VALS[gr+'_'+ str(bix)][name] 
-		val = v0 + e * 10**int(FOCUS[name])
 
+		v0 = EDIT_VALS[gr+'_'+ str(bix)][name] 		
 		while True: # using break to exit
-			# if the current digit/factor makes overshoot min/max: try with small e 
+			val = v0 + e * 10**int(FOCUS[name])
+
+			# compensate for single limitation
+			if val > db['max']*.9999: 
+				val = db['max']
+				break
+			# if the current digit/factor makes overshoot min: try with small e 
 			# when e down to zero, if still overshooting: reduce digit/factor 
-			if db['min']*.9999 <= val <= db['max']*1.0001:  # compensate for single limitation
-				EDIT_VALS[gr+'_'+ str(bix)][name] = val
-				self.DrawParam(bix, int(FOCUS['pix']), gr)
-				break
-			elif e>1: e -= 1
-			else: 
-				if db['type'] in ['f','i']: self.ChangeSelDigit(-1); 
-				break
+			elif val < db['min']*1.0001: 
+				if e>1: e -= 1
+				else: 
+					if db['type'] in ['f','i']: self.ChangeSelDigit(-1)
+					self.DrawParam(bix, int(FOCUS['pix']), gr)
+					val = v0
+					break
+			else: break
 
 		# TBD add callback to update sig gen with changed param
-		print(val, v0)
 		if val != v0:
+			EDIT_VALS[gr+'_'+ str(bix)][name] = val
+			self.DrawParam(bix, int(FOCUS['pix']), gr)
 			if name=='Brightness': tft.led(val)
 			if name=='sh':	
 				# if shape was or becomes square, redraw page to add remove Duty Cycle as needed
@@ -366,13 +390,13 @@ class SGUI:
 			self.ExecKnobPress(self.btns)
 			self.btns = 0
 		
+		# E1: value change if turning knob fast, |e| can be > 1
 		e = self.enc[0].GetTurn()
+		if e and self.enc[0].Btn() == 0: self.ChangeValue(e)
 
-		if e: # E1: value change if turning knob fast, |e| can be > 1
-			self.ChangeValue(e)
-
+		# E2, param change or digit change 
 		e = self.enc[1].GetTurn()
-		if e: # E2, param change or digit change 
+		if e and self.enc[1].Btn() == 0: 
 			if self.E2Mode == 'Param': self.ChangeSelPar(e)
 			else: self.ChangeSelDigit(-e)
 
