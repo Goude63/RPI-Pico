@@ -126,6 +126,8 @@ class TFT(object) :
     self.spi = spi
     self.colorData = bytearray(2)
     self.windowLocData = bytearray(4)
+    self.BG_Col = TFT.BLACK
+
 
   def size( self ) :
     return self._size
@@ -206,9 +208,11 @@ class TFT(object) :
     '''Draw a character at the given position using the given font and color.
        aSizes is a tuple with x, y as integer scales indicating the
        # of pixels to draw for each pixel in the character.'''
-
     if aFont == None:
       return
+
+    BG_1 = self.BG_Col >> 8
+    BG_2 = self.BG_Col & 0xff
 
     startchar = aFont['Start']
     endchar = aFont['End']
@@ -230,10 +234,13 @@ class TFT(object) :
         c = charA[q]
         mask = 1 if not rev else 1 << (8*bpc - 1)
         for r in range(fonth) :
+          pos = 2 * (r * fontw + q)
           if c & mask:
-            pos = 2 * (r * fontw + q)
             buf[pos] = aColor >> 8
             buf[pos + 1] = aColor & 0xff
+          else:
+            buf[pos] = BG_1
+            buf[pos + 1] = BG_2            
           if rev: mask >>= 1
           else: mask <<= 1
       self.image(aPos[0], aPos[1], aPos[0] + fontw - 1, aPos[1] + fonth - 1, buf)
@@ -389,6 +396,10 @@ class TFT(object) :
   def fill( self, aColor = BLACK ) :
     '''Fill screen with the given color.'''
     self.fillrect((0, 0), self._size, aColor)
+    self.set_BG_Color(aColor)
+  
+  def set_BG_Color(self, aColor):
+    self.BG_Col = aColor
 
   def image( self, x0, y0, x1, y1, data ) :
     self._setwindowloc((x0, y0), (x1, y1))
