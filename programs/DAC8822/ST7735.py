@@ -3,7 +3,7 @@
 #Modirfied for micropython-esp32 by boochow 
 
 import machine
-import time
+import time, array, struct
 from math import sqrt
 
 #TFTRotations and TFTRGB are bits to set
@@ -23,11 +23,11 @@ TFTRotations = [0x00, 0x60, 0xC0, 0xA0]
 TFTBGR = 0x08 #When set color is bgr else rgb.
 TFTRGB = 0x00
 
-#@micropython.native
+@micropython.native
 def clamp( aValue, aMin, aMax ) :
   return max(aMin, min(aMax, aValue))
 
-#@micropython.native
+@micropython.native
 def TFTColor( aR, aG, aB ) :
   '''Create a 16 bit rgb value from the given R,G,B from 0-255.
      This assumes rgb 565 layout and will be incorrect for bgr.'''
@@ -102,6 +102,7 @@ class TFT(object) :
   ORANGE = TFTColor(0xFF, 0x80, 0x27)
 
   @staticmethod
+  @micropython.native
   def color( aR, aG, aB ) :
     '''Create a 565 rgb TFTColor value'''
     return TFTColor(aR, aG, aB)
@@ -125,6 +126,8 @@ class TFT(object) :
     self.spi = spi
     self.colorData = bytearray(2)
     self.windowLocData = bytearray(4)
+    self.BG_Col = TFT.BLACK
+
 
   def size( self ) :
     return self._size
@@ -177,7 +180,7 @@ class TFT(object) :
       self._pushcolor(aColor)
 
   @micropython.native
-  def text( self, aPos, aString, aColor, aFont, aSize = 1, nowrap = True ) :
+  def text( self, aPos, aString, aColor, aFont, nowrap = True ) :
     '''Draw a text at the given position.  If the string reaches the end of the
        display it is wrapped to aPos[0] on the next line.  aSize may be an integer
        which will size the font uniformly on w,h or a or any type that may be
@@ -186,16 +189,10 @@ class TFT(object) :
     if aFont == None:
       return
 
-    #Make a size either from single value or 2 elements.
-    if (type(aSize) == int) or (type(aSize) == float):
-      wh = (aSize, aSize)
-    else:
-      wh = aSize
-
     px, py = aPos
-    width = wh[0] * aFont["Width"] + 1
+    width = aFont["Width"] + 1
     for c in aString:
-      self.char((px, py), c, aColor, aFont, wh)
+      self.char((px, py), c, aColor, aFont)
       px += width
       #We check > rather than >= to let the right (blank) edge of the
       # character print off the right of the screen.
@@ -203,17 +200,19 @@ class TFT(object) :
         if nowrap:
           break
         else:
-          py += aFont["Height"] * wh[1] + 1
+          py += aFont["Height"] + 1
           px = aPos[0]
 
   @micropython.native
-  def char( self, aPos, aChar, aColor, aFont, aSizes ) :
+  def char( self, aPos, aChar, aColor, aFont) :
     '''Draw a character at the given position using the given font and color.
        aSizes is a tuple with x, y as integer scales indicating the
        # of pixels to draw for each pixel in the character.'''
-
     if aFont == None:
       return
+
+    BG_1 = self.BG_Col >> 8
+    BG_2 = self.BG_Col & 0xff
 
     startchar = aFont['Start']
     endchar = aFont['End']
@@ -222,30 +221,29 @@ class TFT(object) :
     if (startchar <= ci <= endchar):
       fontw = aFont['Width']
       fonth = aFont['Height']
-      ci = (ci - startchar) * fontw
+      rev = 'RevBits' in aFont  # sadly, some font files have bits endienness reversed!
+      bpc = ((fonth-1) // 8) + 1  # bytes per column (h<=8: 1, 8<h<=16 : 2 etc)
+      n = fontw * bpc             # bytes per character
+      ci = (ci - startchar) * n
+      if    bpc == 1: charA = aFont["Data"][ci:ci + n]
+      else: charA = struct.unpack(f'>{fontw}H', aFont["Data"][ci:ci + n])
 
-      charA = aFont["Data"][ci:ci + fontw]
       px = aPos[0]
-      if aSizes[0] <= 1 and aSizes[1] <= 1 :
-        buf = bytearray(2 * fonth * fontw)
-        for q in range(fontw) :
-          c = charA[q]
-          for r in range(fonth) :
-            if c & 0x01 :
-              pos = 2 * (r * fontw + q)
-              buf[pos] = aColor >> 8
-              buf[pos + 1] = aColor & 0xff
-            c >>= 1
-        self.image(aPos[0], aPos[1], aPos[0] + fontw - 1, aPos[1] + fonth - 1, buf)
-      else:
-        for c in charA :
-          py = aPos[1]
-          for r in range(fonth) :
-            if c & 0x01 :
-              self.fillrect((px, py), aSizes, aColor)
-            py += aSizes[1]
-            c >>= 1
-          px += aSizes[0]
+      buf = bytearray(2 * fonth * fontw)
+      for q in range(fontw) :
+        c = charA[q]
+        mask = 1 if not rev else 1 << (8*bpc - 1)
+        for r in range(fonth) :
+          pos = 2 * (r * fontw + q)
+          if c & mask:
+            buf[pos] = aColor >> 8
+            buf[pos + 1] = aColor & 0xff
+          else:
+            buf[pos] = BG_1
+            buf[pos + 1] = BG_2            
+          if rev: mask >>= 1
+          else: mask <<= 1
+      self.image(aPos[0], aPos[1], aPos[0] + fontw - 1, aPos[1] + fonth - 1, buf)
 
   @micropython.native
   def line( self, aStart, aEnd, aColor ) :
@@ -398,6 +396,10 @@ class TFT(object) :
   def fill( self, aColor = BLACK ) :
     '''Fill screen with the given color.'''
     self.fillrect((0, 0), self._size, aColor)
+    self.set_BG_Color(aColor)
+  
+  def set_BG_Color(self, aColor):
+    self.BG_Col = aColor
 
   def image( self, x0, y0, x1, y1, data ) :
     self._setwindowloc((x0, y0), (x1, y1))
@@ -626,6 +628,7 @@ class TFT(object) :
     self.cs(1)
     time.sleep_us(500)
 
+  @micropython.native
   def initr( self ) :
     '''Initialize a red tab version.'''
     self._reset()

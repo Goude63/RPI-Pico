@@ -4,7 +4,7 @@ from CLT1100 import CLT1100
 from f_sys	 import f_sys
 from f_10x14 import f_10x14
 from machine import SPI,Pin
-import time
+import time, math
 
 #########################################
 #		Global module "Constants"		#
@@ -29,12 +29,12 @@ LONG_BTN_MS	= 500
 EDIT_DEF =  {  # defaults: defv:0, defd:0, res:min (1 for type i), color: green
 'Ch': {
 	'0': {'name':'on', 'type':'b','min':0,   'max':1,  'u':'',  'res' :1},
-	'1': {'name':'sh', 'type':'w','min':0,   'max':4,  'u':'',  'res' :1},
-	'2': {'name':'Fr', 'type':'f','min':0.1, 'max':5e6,'u':'Hz','defd':2,  'color':TFT.BLUE,'defv':1000},
-	'3': {'name':'Am', 'type':'f','min':1e-3,'max':10, 'u':'V', 'defv':1,  'color':TFT.PURPLE},
-	'4': {'name':'Of', 'type':'f','min':-10, 'max':10, 'u':'V', 'defd':-3, 'res'  :1e-3, 'color':TFT.ORANGE},
-	'5': {'name':'Ph', 'type':'i','min':-181,'max':180,'u':'o', 'defd':1,  'color':TFT.GRAY},
-	'6': {'name':'Dt', 'type':'f','min':0,'max':100,   'u':'%', 'defd':1, 'res':0.1, 'color':TFT.CYAN}},
+	'1': {'name':'sh', 'type':'w','min':0,   'max':8,  'u':'',  'res' :1}, # TBD calculate max from files
+	'2': {'name':'Fr', 'type':'f','min':0.1, 'max':5e6,'u':'Hz','defd':2, 'color':TFT.BLUE,'defv':1000},
+	'3': {'name':'Am', 'type':'f','min':1e-3,'max':10, 'u':'V', 'defv':1, 'color':TFT.PURPLE},
+	'4': {'name':'Of', 'type':'f','min':-10, 'max':10, 'u':'V', 'defd':-3,'res'  :1e-3, 'color':TFT.ORANGE},
+	'5': {'name':'Ph', 'type':'i','min':-181,'max':180,'u':'o', 'defd':1, 'color':TFT.GRAY},
+	'6': {'name':'Dt','type':'f','min':0,'max':100,'u':'%','defv':50,'defd':1,'res':0.1,'color':TFT.CYAN}},
 'Cfg': {
 	'0':{'name':'Brightness', 'type':'i','min':10,'max':100, 'u':'%', 'defd':1, 'defv':80,'res':10},
 	'1':{'name':'Volt Limit', 'type':'f','min':1, 'max':10,  'u':'V', 'defv':3, 'res':0.1}}}	
@@ -163,21 +163,40 @@ class SGUI:
  
 	# draw on/off led and shape icon, including grey focus rectangle
 	def DrawIcon(self, pn, bix, xof, yof, ei):
+		v = EDIT_VALS['Ch_'+ str(bix)][pn]
+		fix = 1 if ZOOM else 0
+		fw = FW[fix]
+		y = yof + fw*1.4
 		if pn=='on':
-			on = EDIT_VALS['Ch_'+ str(bix)]['on']
-			r = (FW[1] if ZOOM else FW[0]) * 7 // 10	
-			x = xof+r*7
-			y = yof + r*2.2
-			if on: 
+			x = xof + 5*fw
+			r = fw*0.8
+			d = r * 1.2
+			if v: 
 				tft.fillcircle((x, y), r, tft.GREEN)
 			else:
 				tft.fillcircle((x, y), r, tft.BLACK)
 				tft.circle((x, y), r, tft.WHITE)
 			if ei >= 0:
 				d = r * 1.3
-				tft.rect((x-d, y-d),(2.2*d, 2*d), tft.GRAY)
-		else:
-			pass
+				tft.rect((x-d, y-d),(2.3*d, 2.1*d), tft.GRAY)
+		else: # 'sh'
+			x = xof + 7*fw
+			w = fw*5+4
+			c = tft.BLACK
+			tft.fillrect((x, y-fw),(fw*5,fw*2+1), tft.WHITE)
+			if ei>=0: tft.rect((x-2, y-fw-2),(w,fw*2+5), tft.GRAY)
+
+			if v >= 5:
+				tft.set_BG_Color(tft.WHITE)
+				text(7.5,0.6,f'Arb{v-4}', fix, c, xof, yof)
+				tft.set_BG_Color(tft.BLACK)
+				return
+
+			w -= 2
+			x+=1; xn = x + w
+			while x <= xn:
+				x += 1
+
 
 	@micropython.native
 	def DrawParam(self, bix, pix, g):
@@ -294,9 +313,10 @@ class SGUI:
 		if delta == 0: return
 		delta = 1 if delta>0 else -1		
 		gr = PAGES[ACTIVE]['blocks'][FOCUS['block']]
+
 		db = EDIT_DEF[gr][str(FOCUS['pix'])]
 		d0 = FOCUS[db['name']] 
-		d =d0 + delta
+		d = d0 + delta
 
 		# limit digit according to parameter max/min values
 		res = db['res']
@@ -329,10 +349,14 @@ class SGUI:
 				if ACTIVE=='Top': self.NextChannel()
 			else:
 				if self.E2Mode == 'Param':
-					self.E2Mode = 'Digit'
+					# shape and on/off do not need select digit
+					gr = PAGES[ACTIVE]['blocks'][FOCUS['block']]
+					if gr!='Ch' or int(FOCUS['pix'])>=2: 
+						self.E2Mode = 'Digit'
+						self.DrawBlock(FOCUS['block'])
 				else:  # 'Digit'
 					self.E2Mode = 'Param'
-				self.DrawBlock(FOCUS['block'])
+					self.DrawBlock(FOCUS['block'])
 
 	@micropython.native
 	def ChangeValue(self, e):
@@ -406,7 +430,7 @@ if __name__ == '__main__':
 	print('\33c',end='') # clear screen in most terminals
 
 	tst = SGUI()
-	print(EDIT_VALS,'\n')
+	# print(EDIT_VALS,'\n')
 	#print(EDIT_DEF)
 	#print(FOCUS,'\n',ACTIVE)
 	
