@@ -4,7 +4,7 @@ from CLT1100 import CLT1100
 from f_sys	 import f_sys
 from f_10x14 import f_10x14
 from machine import SPI,Pin
-import time, math
+import time, math, array, random
 
 #########################################
 #		Global module "Constants"		#
@@ -29,7 +29,7 @@ LONG_BTN_MS	= 500
 EDIT_DEF =  {  # defaults: defv:0, defd:0, res:min (1 for type i), color: green
 'Ch': {
 	'0': {'name':'on', 'type':'b','min':0,   'max':1,  'u':'',  'res' :1},
-	'1': {'name':'sh', 'type':'w','min':0,   'max':8,  'u':'',  'res' :1}, # TBD calculate max from files
+	'1': {'name':'sh', 'type':'w','min':0,   'max':8,  'u':'',  'defv':1, 'res' :1}, # TBD calculate max from files
 	'2': {'name':'Fr', 'type':'f','min':0.1, 'max':5e6,'u':'Hz','defd':2, 'color':TFT.BLUE,'defv':1000},
 	'3': {'name':'Am', 'type':'f','min':1e-3,'max':10, 'u':'V', 'defv':1, 'color':TFT.PURPLE},
 	'4': {'name':'Of', 'type':'f','min':-10, 'max':10, 'u':'V', 'defd':-3,'res'  :1e-3, 'color':TFT.ORANGE},
@@ -37,7 +37,7 @@ EDIT_DEF =  {  # defaults: defv:0, defd:0, res:min (1 for type i), color: green
 	'6': {'name':'Dt','type':'f','min':0,'max':100,'u':'%','defv':50,'defd':1,'res':0.1,'color':TFT.CYAN}},
 'Cfg': {
 	'0':{'name':'Brightness', 'type':'i','min':10,'max':100, 'u':'%', 'defd':1, 'defv':80,'res':10},
-	'1':{'name':'Volt Limit', 'type':'f','min':1, 'max':10,  'u':'V', 'defv':3, 'res':0.1}}}	
+	'1':{'name':'Volt Limit', 'type':'f','min':1, 'max':10,  'u':'V', 'defv':3, 'res':0.1}}}
 
 # Editable elements values, factor/digit, col, row, font size of current screen location
 EDIT_VALS = {}
@@ -49,7 +49,22 @@ PAGES = {
 FOCUS  = {'block':0, 'pix': 2}  #'param':'fr', 
 ACTIVE = ''
 PAGE   = {}
-ZOOM = False
+ZOOM = True
+
+SIN_TBLS = []
+SHAPE_W = (FW[0]*4, FW[1]*4)
+
+# two sin tables for ZOOM and not ZOOM
+def CreateSinTbl():
+	for i in range(2):
+		w = SHAPE_W[i]
+		tbl = array.array('f',(0 for _ in range(w+1)))
+		dx = 2.0 * math.pi / float(w)
+		x = dx/4 if i==1 else dx
+		for i in range(w): 
+			tbl[i] = math.sin(x)
+			x += dx
+		SIN_TBLS.append(tbl)
 
 # returns (param name, string value including units, color
 # cofs = horizontal 1st character display offset, ei = index in string where focus is) 
@@ -130,6 +145,7 @@ class SGUI:
 
 		self.savebix = FOCUS['block']
 		self.savepix = FOCUS['pix']
+		CreateSinTbl()
 
 		# add default params keys' EDIT_VALS (defv, res and defd)
 		for grp in EDIT_DEF: 				# grp = 'Ch', 'cfg'...
@@ -162,48 +178,61 @@ class SGUI:
 					EDIT_VALS[name][pn] = EDIT_DEF[grp][pix]['defv']
  
 	# draw on/off led and shape icon, including grey focus rectangle
+	@micropython.native
 	def DrawIcon(self, pn, bix, xof, yof, ei):
 		v = EDIT_VALS['Ch_'+ str(bix)][pn]
 		fix = 1 if ZOOM else 0
 		fw = FW[fix]
 		y = yof + fw*1.4
+		r = int(fw*0.8)
 		if pn=='on':
 			x = xof + 5*fw
-			r = fw*0.8
 			d = r * 1.2
 			if v: 
 				tft.fillcircle((x, y), r, tft.GREEN)
 			else:
 				tft.fillcircle((x, y), r, tft.BLACK)
-				tft.circle((x, y), r, tft.WHITE)
+				tft.circle((x, y), r, tft.GRAY)
 			if ei >= 0:
 				d = r * 1.3
 				tft.rect((x-d, y-d),(2.3*d, 2.1*d), tft.GRAY)
 		else: # 'sh'
 			x = xof + 7*fw
-			w = fw*5+4
+			w = SHAPE_W[fix]+fw//2
 			c = tft.BLACK
-			tft.fillrect((x, y-fw),(fw*5,fw*2+1), tft.WHITE)
-			if ei>=0: tft.rect((x-2, y-fw-2),(w,fw*2+5), tft.GRAY)
+			tft.fillrect((x, y-fw),(w+fw-3+fix,fw*2+1), tft.WHITE) # +fix is a rounding trick... 
+			if ei>=0: tft.rect((x-2, y-fw-2),(w+fw*1.3-fix,fw*2+5), tft.GRAY)
 
-			if v >= 5:
+			if v >= 6:
 				tft.set_BG_Color(tft.WHITE)
-				text(7.5,0.6,f'Arb{v-4}', fix, c, xof, yof)
+				text(7.5,0.6,f'Arb{v-5}', fix, c, xof, yof)
 				tft.set_BG_Color(tft.BLACK)
 				return
-
-			w -= 2
-			x+=1; xn = x + w
-			while x <= xn:
+			
+			w -= fw//2
+			yof += int(fw * 1.5) 
+			x += fw//2; xn = x + w
+			# lx = x;	ly = int(yof if v <= 1 else yof + r) # remember y axis pointing down...
+			for i in range(w+1):
 				x += 1
+				if   v == 1: y = yof + r * SIN_TBLS[fix][i]      # sin
+				elif v == 0: y = yof - (r if w//4 < i < w*5//8 else 0) # square
+				elif v == 2: y = yof-r + 2*r*abs(w/2-i)/(w/2)	 # triangular
+				elif v == 3: y = yof+r - 2*r*abs((w-i)%(w-4))/w  # left sawtooth
+				elif v == 4: y = yof+r - 2*r*abs(i%(w-4))/w 	 # right sawtooth
+				elif v == 5: y = random.randrange(yof-r, yof+r)  # noise
+				else: y = yof
 
+				y = int(y)
+				if i>0:	tft.line((lx,ly), (x,y), tft.BLACK)
+				lx=x; ly=y
 
 	@micropython.native
 	def DrawParam(self, bix, pix, g):
 		pn = EDIT_DEF[g][str(pix)]['name']
 
 		# skip dusy cycle for non square wave shape		
-		if pn=='Dt' and EDIT_VALS['Ch_'+ str(bix)]['sh']!=1: return
+		if pn=='Dt' and EDIT_VALS['Ch_'+ str(bix)]['sh']!=0: return
 		(h, s, c, ei) = gformat(bix, pix, g)
 
 		color = tft.WHITE
@@ -300,7 +329,7 @@ class SGUI:
 
 		# handle case for duty cycle only for square wave shape 
 		l = len(EDIT_DEF[gr])
-		if gr=='Ch' and EDIT_VALS['Ch_'+ str(FOCUS['block'])]['sh']!=1: l -= 1
+		if gr=='Ch' and EDIT_VALS['Ch_'+ str(FOCUS['block'])]['sh']!=0: l -= 1
 
 		if   newix >= l: newix = 0
 		elif newix < 0: newix = l - 1
@@ -392,9 +421,10 @@ class SGUI:
 			if name=='Brightness': tft.led(val)
 			if name=='sh':	
 				# if shape was or becomes square, redraw page to add remove Duty Cycle as needed
-				if round(v0)==1 or round(val)==1: 
+				if round(v0)==0 or round(val)==0: 
 					self.DrawBlock(bix)
 
+	@micropython.native
 	def ProcessKnobs(self):
 		# new btns value 
 		btns = self.enc[0].Btn() + (self.enc[1].Btn() << 1)
