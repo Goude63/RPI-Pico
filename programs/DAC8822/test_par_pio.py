@@ -2,7 +2,7 @@
 # pio code for DAC9922 parallel com
 # in test code: D0-D15 = GP0-GP15 on final GP10-GP 
 # -------------------------------------
-machine.freq(200_000_000) 
+machine.freq(300_000_000) 
 
 # must run at 100MHz clock. 1 ns per clock
 from rp2 import PIO, asm_pio, StateMachine
@@ -20,32 +20,19 @@ import math
 	fifo_join=PIO.JOIN_TX)
 def _DAC8822():
 	pull(block)         # pull takes a value from tx fifo into osr    
-	out(pins,21) [2]    # D0-D15 + nc + A0 + U1/U2 and set /WR low + Tas 10ns
-
-	# debug delay 0.25 sec
-	# mov(x,isr)
-	# label('d1')
-	#jmp(x_dec,'d1')[9]  # 10 ms
-
-	set(pins,1)         # set /WR to 1 (stop the write operation)
-	# nop() [9]
-
-	# debug delay 0.25 sec
-	# mov(x,isr)
-	# label('d2')
-	# jmp(x_dec,'d2')[3]  # 2ms
+	out(pins,21) [1]    # D0-D15 + nc + A0 + U1/U2 and set /WR low + Tas 10ns
+	set(pins,1)          # set /WR to 1 (stop the write operation)	
 
 SMID = 0
 PIOTX = 0x50200010 + 4 * SMID
-sm = StateMachine(SMID, _DAC8822, 200_000_000, out_base=Pin(10),set_base=Pin(30))
+sm = StateMachine(SMID, _DAC8822, 300_000_000, out_base=Pin(10),set_base=Pin(30))
 enc = CLT1100(10, 32, 40 )
 
 # test to send multi channel data
-def tst2(CH_CNT):
-	global dmas,bufs
+def tstDMA(CH_CNT=2, tst_size=8, fdiv = 1024 ):
+	global dmas,cdmas,bufs
 
-	pwm = PWM(22,freq=2500,duty_u16=8192)
-	tst_size = 4096
+	# pwm = PWM(22,freq=2500,duty_u16=8192)
 	dmas = []; cdmas = []; bufs = []; caddr = array.array('L',[0]*4) 
 	for i in range(CH_CNT):
 		dma = Dma(data_size=4)
@@ -55,17 +42,18 @@ def tst2(CH_CNT):
 		caddr[i] = uctypes.addressof(blk)
 		dma.SetChData(blk,blk,tst_size,False)
 		dma.SetWriteAdd(PIOTX)
-		dma.SetTREQ(0, 1, 900)
+		dma.SetTREQ(0, 1, fdiv)
 		# dma.SetDREQ(35)  # in debug: send at PWM22/3A wrap speed = slow
 
-		ch = (i + 4) << 17
+		ch = (i + 4 + 1) << 17
 		#ch = (i + 2) << 17
+		A = 5000
 		for j in range(tst_size):		
 			#blk[j] = int(32768.01 + 32767.01 * math.sin((float(j/tst_size))*2*math.pi)) + ch
-			if i == 0:	blk[j] = int(32768.01 + 32767.01 * math.sin((float(j/tst_size))*2*math.pi)) + ch
-			#if i == 1: blk[j] = int(65535 * j / tst_size) + ch
-			blk[j] = 0x8000 + ch
-		# print(blk)
+			if i == 1: blk[j] = int(32768 + round(32767 * math.sin((float(j/tst_size))*2*math.pi))) + ch
+			if i == 0: blk[j] = int(65535 * j / tst_size) + ch
+			#blk[j] = 0x8000 + A if (i + j) % 2 else 0x8000 - A
+			#blk[j] += ch
 		bufs.append(blk)
 
 	# setup chain Dma channels that loops data
@@ -79,21 +67,7 @@ def tst2(CH_CNT):
 		cdma.SetCnt(1)
 		cdmas.append(cdma)
 
-	# Dma.Scan()
-	for i in range(CH_CNT):
-		dmas[i].Trigger()
-	
-	# time.sleep(1)
-	# Dma.Scan()
-
-	while True:
-	#for i in range(10):
-		# print('\33c',end='') # clear screen in most terminals
-		#for i in range(CH_CNT):
-		#	dmas[i].Info()
-		#	cdmas[i].Info()
-		# Dma.Scan()
-		time.sleep(1)
+	for i in range(CH_CNT):	dmas[i].Trigger() # start all
 
 @micropython.native
 def write_ch(ch, v):
@@ -122,43 +96,33 @@ def tst1():
 				print(f'ch={ch}, v={v[ch]}')
 		time.sleep(0.5)
 
-@micropython.native
-def tst0():
-	v = [0, 32768, 65535]
-	ix = 0
-	n = 0
-	while n<10000:
-		write_ch(0, v[ix])
-		ix += 1
-		if ix >= 3: ix = 0
-		write_ch(1, v[ix])
-		n += 1
-		time.sleep_us(60)
 
 def main():
 	print('\33c',end='') # clear screen in most terminals
 	rst = Pin(31,Pin.OUT,value=0)
-	time.sleep_us(1)
+	time.sleep_ms(1)
 	rst.value(1)
-	
-	# for debug: set y for loop count to slowdown for human eye led blink
-	# The 3 following lines can optionally be commented for final 
-	#sm.put(100_000) # 1ms per clock @ 100MHz  
-	#sm.exec('pull()')
-	#sm.exec('mov(isr, osr)')	# store end write code in PIO register y 
-
 	sm.active(True)
 
-	tst2(2)
+	write_ch(1, 65535); time.sleep(2)
+	cnt = 0
+	try:
+		tstDMA(2, 64, 256)
+		print('\33c')
 
-	write_ch(0, 65535)
-	write_ch(1, 65535)
-	time.sleep(1)
+		while True:	
+			time.sleep_ms(200)
+			cnt += 1
+			if cnt > 10:
+				cnt = 0
+#				print('\33c')
+				dmas[0].Info()
+				cdmas[0].Info()
 
-	rst.value(0)
-	time.sleep_us(1)
-	rst.value(1)
-
-	time.sleep(5)
-
+	finally:
+		sm.active(0)
+		time.sleep_ms(1)
+		rst.value(0)
+		time.sleep_ms(1)
+		rst.value(1)
 main()
