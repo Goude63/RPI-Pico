@@ -8,7 +8,7 @@ import tft_buttons as Buttons
 import romancs as font
 import array, json, gc
 
-VERSION = "1.33"
+VERSION = "1.35"
 FIX_X  = -20
 FIX_Y  = 0
 MAXX   = 320   # must be even
@@ -36,14 +36,19 @@ adc   = ADC(27)
 relay = Pin(5,Pin.OUT,value=0)
 tft   = tft_config.config(3)
 btns  = Buttons.Buttons()
-SMODES  = ("LiPo","LiFePo4")
-SLIMITS = ([0.3, 3.2, 4.2], [0.5, 3.0, 3.6]) # auto off limits (work A, minv, maxv)
+SMODES  = ("LiPo","Lipo Store","LiFePo4","2xAA")
+# auto off limits (work A, minv, maxv)
+SLIMITS = ([0.0, 3.2, 4.2], [0.0, 3.75, 4.2], [0.0, 3.0, 3.6], [0.0, 2.6, 3.8]) 
 
 cfg   = {"Mode" : 0,	"R":[0.197684, 0.111008, 0.396938], "Range":5, "SMode":0,
 		  "AutoScale":1, "VScale":[3.0, 3.7], "IScale": [4.0, 15.0] }
 
 state = {"V" : 0 ,"A" : 0, "Ah" : 0, "Wh" : 0, "T":0}
-display = {"Error": 0, "Pause": 0, "Splash": 0, "RelayDelay": 0, "ErrMsg":[]}
+display = {"Mode": 0, "Splash": 0, "RelayDelay": 0, "Seq": 0, "Msg":[]}
+NORMAL = const(0)
+ERROR  = const(1)
+PAUSE  = const(2)
+SPLASH = const(3) 
 
 Graph = {"Varr": array.array('f',[0] * MAXX), "Iarr": array.array('f',[0] * MAXX), 
 	 "Xix" : 0, "PtPerPix": 1, "n": 0 , "y0":80, "h":100}
@@ -86,7 +91,7 @@ def RedrawGraph():
 		DrawGraphPixel(ix, "I", BLUE)
 	
 	# re-show error message if graph is redrawn (in case there is an error pending)
-	if display["Error"]: ShowError(display["ErrMsg"])
+	if display["Mode"] == ERROR: ShowError(display["Msg"])
 
 def AutoScale(g, v):
 	if cfg["AutoScale"] == 0: return # autoscale off
@@ -188,7 +193,7 @@ def ProcessMessages():
 			state["Wh"] = fr[1]
 			DisplayTop()
 		elif msg[0:8]=='upload=(': # receive 
-			if not display["Pause"]:
+			if not display["Mode"] == PAUSE:
 				ShowPause()
 				InitGraph()
 			r = msg[8:-1].split(',')
@@ -200,9 +205,8 @@ def ProcessMessages():
 			print(">>ok<<") 
 		elif msg[0:8]=='unpause(':  # value is PtPerPix
 			Graph["PtPerPix"] = int(msg[8:-1])
-			if display["Pause"]:
-				display["Pause"] = 0
-				display["Error"] = 0
+			if display["Mode"] == PAUSE:
+				display["Mode"] = 0
 				RedrawGraph()
 		elif msg[0:9]=='get_file(':
 			fn = msg[9:-1]
@@ -224,18 +228,19 @@ def SendFile(fn):
 	if fn=="state.json": RestoreState()
 
 def ShowPause(Msg = 'Pause', color=GREY):
-	display["Pause"] = 1
+	display["Mode"] = PAUSE	
 	ShowError(Msg, color=color)
 
 # Splash = short message to give action feedback
 def ShowSplash(Msg, color=DGREEN, time_ms = 1500):
+	display["Mode"] = SPLASH
 	display["Splash"] = time.ticks_ms() + time_ms
 	ShowMsg(Msg, color)
 
 def ShowError(ErrMsg = 'Error', color=RED):
-	display["Error"] = 1
+	display["Mode"] = ERROR	
 	if isinstance(ErrMsg, str): ErrMsg = [ErrMsg]
-	display["ErrMsg"] = ErrMsg
+	display["Msg"] = ErrMsg
 	ShowMsg(ErrMsg, color)
 
 def ShowMsg(Msg, color):
@@ -303,9 +308,10 @@ def Display(x, y, text, fg = st7789.WHITE, bg = st7789.BLACK,  sc = 1.3):
 @micropython.native
 def DisplayTop():
 	global FanMsgCnt
-	if display["Error"] and not display["Pause"]: return
-	if display["Splash"] and time.ticks_diff(time.ticks_ms(), display["Splash"]) > 0:
-		display["Splash"] = 0
+	mode = display["Mode"]
+	if mode == ERROR : return
+	if mode == SPLASH and time.ticks_diff(time.ticks_ms(), display["Splash"]) > 0:
+		display["Mode"] = 0 # NORMAL
 		RedrawGraph()
 
 	h = int(round(font.HEIGHT * 1.3))
@@ -350,7 +356,7 @@ def DisplayTop():
 	tft.circle(x0+w-11, y+6, 3, st7789.YELLOW)
 
 def DisplayCfg():
-	if display["Error"]: return
+	if display["Mode"] == ERROR: return
 	tft.fill_rect(0, 210, MAXX, font.HEIGHT, st7789.BLACK)
 	Display(1, 220, f'Mode:{MName[cfg["Mode"]]}', fg=GREY, sc=1)
 	Display(-1, 220, f'Range:{RNGV[cfg['Range']]}', fg=GREY, sc=1)
@@ -359,22 +365,24 @@ def Restart(rst = False):
 	if rst:
 		state["Ah"] = 0
 		state["Wh"] = 0
-	display["Pause"] = 0
-	display["Error"] = 0
+	display["Mode"] = 0
 	InitGraph()
 	RedrawGraph()	
 
-def Disconnect():
+def ChkDisconnect():
+	# noo need to check if relay is already off
+	if relay.value() == 0: return 
+
 	# do not disconnect near a relay state change
 	if display["RelayDelay"]>0: 
-		if time.ticks_diff(display["RelayDelay"], time.ticks_ms())<0:
-			return
-		else:
-			display["RelayDelay"] = 0
-	if cfg["SMode"] < 2: return
+		rt = time.ticks_diff(display["RelayDelay"], time.ticks_ms()) 
+		if rt>0: return
+		else: display["RelayDelay"] = 0
+	if cfg["SMode"] >= 2: return
 
 	lim = SLIMITS[cfg["SMode"]]
-	if (state["A"] > lim[0]) and not (lim[1] <= state["V"] <= lim[2]):		
+	# print(f'lim:{lim}, V:{state["V"]}', end = '-')
+	if (state["A"] >= lim[0]) and not (lim[1] <= state["V"] <= lim[2]):		
 		SaveState()
 		relay.value(0)
 		ShowError("Auto Cut Out")
@@ -505,22 +513,23 @@ def RestoreState():
 		Restart(True) # no saved file, clear graph
 
 @micropython.native
-def CheckKeys():	
+def CheckKeys():
 	Keys = btns.key1.value() + (btns.key2.value() << 1) + (btns.key3.value() << 2) + (btns.key4.value() << 3)
 	Keys ^= 0xF
 
-	err = display["Error"]  # 0 no errr, 1: wait any button pressed, 2: wait release
-	if err:
+	mode = display["Mode"]
+	if mode in [ERROR, PAUSE]:
+		seq  = display["Seq"]  # 0 no err, 1: wait any button pressed, 2: wait release
 		if Keys == 0:
-			if err == 2: # any button was pressed and released. hide error
-				display["Error"] = 0  
-				display["Pause"] = 0
+			if seq == 1: # any button was pressed and released. hide error
+				display["Mode"] = 0  
+				display["Seq"] = 0
 				tft.fill(st7789.BLACK)
 				DisplayTop()
 				DisplayCfg()
 				RedrawGraph()
 			return  # wait for keypressed
-		if Keys > 0 and err == 1: display["Error"] = 2 # request wait for release
+		if Keys > 0 and seq == 0: display["Seq"] = 1 # request wait for release
 		return
 
 	if KeyTrack["Long"]:
@@ -546,9 +555,9 @@ def main():
 	tft.init()
 	tft.fill(st7789.BLACK)
 
-	ShowError(f"Version: {VERSION}",  st7789.color565(32,32,32))
+	ShowMsg(f"Version: {VERSION}",  st7789.color565(32,32,32))
 	time.sleep(2)
-	display["Error"] = 0
+	display["Mode"] = 0
 
 	LoadCfg()
 	DisplayCfg()
@@ -585,10 +594,10 @@ def main():
 
 		rt = round(ReadTemp(),1) # resistance temperature
 		vals = ads.readMulti(Chnls) 
-		if not display["Pause"]: 
+		if not display["Mode"] == PAUSE: 
 			print("acq=", end="")
 			print(vals + (rt,))
 			Cumulate(vals, dt)
-			Disconnect()
+			ChkDisconnect()
 		state["T"] = rt				
 main()
